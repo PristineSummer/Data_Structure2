@@ -1,4 +1,4 @@
-import type { AnalyticsDTO, DemoDTO, PathDTO, POI, SimulationState, Stats, VertexDTO, ViewportDTO } from './types';
+import type { AnalyticsDTO, DemoDTO, MinimapDTO, PathDTO, POI, SimulationState, Stats, VertexDTO, ViewportDTO } from './types';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
@@ -27,6 +27,7 @@ export const api = {
   generateMap: (n = 10000, seed = 2026) => postJson<{ status: string }>('/api/map/generate', { n, seed }),
   generationStatus: () => getJson<{ status: string; data: Stats | string | null }>('/api/map/generate/status'),
   stats: () => getJson<Stats>('/api/map/stats'),
+  minimap: () => getJson<MinimapDTO>('/api/minimap'),
   viewport: (params: Record<string, string | number | boolean>) => getJson<ViewportDTO>('/api/viewport', params),
   nearest: (x: number, y: number) => getJson<VertexDTO>('/api/nearest', { x, y }),
   path: (start: number, end: number, algo: string, trace = true) =>
@@ -38,7 +39,7 @@ export const api = {
   simSpeed: (speed: number) => postJson<{ speed: number }>('/api/sim/speed', { speed }),
   simState: () => getJson<SimulationState>('/api/sim/state'),
   analytics: () => getJson<AnalyticsDTO>('/api/analytics/traffic'),
-  demo: () => postJson<DemoDTO>('/api/demo/setup', { n: 10000, seed: 2026 }),
+  demo: (n = 10000, seed = 2026) => postJson<DemoDTO>('/api/demo/setup', { n, seed }),
   poiCategories: () => getJson<{ categories: Array<{ id: string; label: string }> }>('/api/poi/categories'),
   poiSearch: (x: number, y: number, category: string, k = 12, radius = 600) =>
     getJson<{ center: { x: number; y: number }; pois: POI[] }>('/api/poi/search', { x, y, category, k, radius }),

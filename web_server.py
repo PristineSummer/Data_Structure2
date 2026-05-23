@@ -457,10 +457,11 @@ def analytics_traffic():
 @app.route("/api/demo/setup", methods=["POST"])
 def demo_setup():
     data = request.get_json() or {}
-    n = int(data.get("n", 10000))
+    n = max(100, min(30000, int(data.get("n", 10000))))
     seed = int(data.get("seed", 2026))
     try:
-        if not engine.is_loaded:
+        current_vertices = engine.get_stats().get("vertices", 0) if engine.is_loaded else 0
+        if not engine.is_loaded or int(current_vertices) != n:
             engine.generate_map(n_vertices=n, width=2000, height=1500, seed=seed, poi_density=0.08)
         _start_background_simulation(cars=1800, seed=seed, density=(0.18, 0.58), c=1.0, threshold=0.8)
 

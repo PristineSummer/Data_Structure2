@@ -41,6 +41,12 @@ export interface ViewportDTO {
   error?: string;
 }
 
+export interface MinimapDTO {
+  vertices: Array<{ id: number; x: number; y: number }>;
+  edges: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+  error?: string;
+}
+
 export interface TraceVertex {
   id: number;
   x?: number;

@@ -132,6 +132,17 @@ def test_poi_api(client) -> None:
     print("  OK test_poi_api")
 
 
+def test_minimap_api(client) -> None:
+    minimap = assert_status(client.get("/api/minimap"))
+    assert isinstance(minimap["vertices"], list)
+    assert isinstance(minimap["edges"], list)
+    assert minimap["vertices"], minimap
+    assert minimap["edges"], minimap
+    assert {"id", "x", "y"}.issubset(minimap["vertices"][0].keys())
+    assert {"x1", "y1", "x2", "y2"}.issubset(minimap["edges"][0].keys())
+    print("  OK test_minimap_api")
+
+
 def test_demo_setup(client) -> None:
     demo = assert_status(client.post("/api/demo/setup", json={"n": 320, "seed": 2026}))
     assert {"start", "end", "incident", "static_path", "traffic_path", "metrics"}.issubset(demo.keys())
@@ -152,6 +163,7 @@ def run_all_tests() -> None:
         test_trace_path_and_traffic_path(client)
         test_viewport_traffic_fields_and_analytics(client)
         test_poi_api(client)
+        test_minimap_api(client)
         test_demo_setup(client)
         client.post("/api/sim/stop")
     print("All web API tests passed.")

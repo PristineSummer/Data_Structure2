@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import L, { Map as LeafletMap } from 'leaflet';
 import { api } from './api';
-import type { AnalyticsDTO, CarDTO, DemoDTO, EdgeDTO, PathDTO, POI, SimulationState, Stats, VertexDTO, ViewportDTO } from './types';
+import type { AnalyticsDTO, CarDTO, DemoDTO, EdgeDTO, MinimapDTO, PathDTO, POI, SimulationState, Stats, VertexDTO, ViewportDTO } from './types';
 
 const trafficColors = ['#22c55e', '#eab308', '#f97316', '#ef4444'];
 const poiLabels: Record<string, string> = {
@@ -24,6 +25,11 @@ const ll = (x: number, y: number): L.LatLngExpression => [-y, x];
 const glx = (lat: number, lng: number) => ({ x: lng, y: -lat });
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 const fmt = (n?: number, digits = 1) => Number.isFinite(n) ? Number(n).toFixed(digits) : '—';
+const MAP_SIZE_MIN = 100;
+const MAP_SIZE_MAX = 30000;
+const MAP_SIZE_PRESETS = [1000, 5000, 10000, 20000];
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+const normalizeMapSize = (n: number) => Math.round(clamp(Number.isFinite(n) ? n : 10000, MAP_SIZE_MIN, MAP_SIZE_MAX));
 
 type StepState = 'idle' | 'active' | 'done';
 
@@ -40,6 +46,32 @@ interface DemoStep {
   state: StepState;
 }
 
+const makeDemoSteps = (n: number): DemoStep[] => [
+  { label: `生成 ${n} 点地图`, state: 'idle' },
+  { label: '启动早高峰交通流', state: 'idle' },
+  { label: '选择跨城路线', state: 'idle' },
+  { label: '注入事故拥堵', state: 'idle' },
+  { label: '对比静态/避堵路径', state: 'idle' },
+];
+
+function overviewMetrics(width: number, height: number, stats: Stats) {
+  const padding = 8;
+  const innerW = Math.max(1, width - padding * 2);
+  const innerH = Math.max(1, height - padding * 2);
+  const scale = Math.min(innerW / stats.width, innerH / stats.height);
+  const mapW = stats.width * scale;
+  const mapH = stats.height * scale;
+  const offsetX = (width - mapW) / 2;
+  const offsetY = (height - mapH) / 2;
+  return {
+    scale,
+    offsetX,
+    offsetY,
+    toScreen: (x: number, y: number) => ({ x: offsetX + x * scale, y: offsetY + y * scale }),
+    toWorld: (x: number, y: number) => ({ x: (x - offsetX) / scale, y: (y - offsetY) / scale }),
+  };
+}
+
 export default function App() {
   const mapRef = useRef<LeafletMap | null>(null);
   const edgeCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -47,11 +79,15 @@ export default function App() {
   const vertexCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const carCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const traceCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const statusTimerRef = useRef<number | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
 
   const [status, setStatus] = useState({ text: '就绪 - 点击生成地图或启动演示', kind: 'idle' });
+  const [mapSize, setMapSize] = useState(10000);
   const [stats, setStats] = useState<Stats | null>(null);
   const [viewport, setViewport] = useState<ViewportDTO>({ vertices: [], edges: [] });
+  const [minimapData, setMinimapData] = useState<MinimapDTO | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsDTO | null>(null);
   const [simState, setSimState] = useState<SimulationState | null>(null);
   const [cars, setCars] = useState<CarDTO[]>([]);
@@ -69,19 +105,26 @@ export default function App() {
   const [poiCategory, setPoiCategory] = useState('gas_station');
   const [pois, setPois] = useState<POI[]>([]);
   const [incident, setIncident] = useState<DemoDTO['incident'] | null>(null);
-  const [demoSteps, setDemoSteps] = useState<DemoStep[]>([
-    { label: '生成 10000 点地图', state: 'idle' },
-    { label: '启动早高峰交通流', state: 'idle' },
-    { label: '选择跨城路线', state: 'idle' },
-    { label: '注入事故拥堵', state: 'idle' },
-    { label: '对比静态/避堵路径', state: 'idle' },
-  ]);
+  const [highlightedEdge, setHighlightedEdge] = useState<EdgeDTO | null>(null);
+  const [highlightVisible, setHighlightVisible] = useState(true);
+  const [demoRunning, setDemoRunning] = useState(false);
+  const [demoStepIndex, setDemoStepIndex] = useState<number | null>(null);
+  const [demoSteps, setDemoSteps] = useState<DemoStep[]>(() => makeDemoSteps(10000));
 
   const mapLoaded = Boolean(stats);
+  const selectedMapSize = normalizeMapSize(mapSize);
 
   const setBusy = (text: string) => setStatus({ text, kind: 'busy' });
   const setOk = (text: string) => setStatus({ text, kind: 'ok' });
   const setError = (text: string) => setStatus({ text, kind: 'error' });
+
+  const setDemoTimeline = useCallback((activeIndex: number | null, doneUntil = -1, size = selectedMapSize) => {
+    setDemoStepIndex(activeIndex);
+    setDemoSteps(makeDemoSteps(size).map((step, idx) => ({
+      ...step,
+      state: activeIndex === idx ? 'active' : idx <= doneUntil ? 'done' : 'idle',
+    })));
+  }, [selectedMapSize]);
 
   const fitMap = useCallback((nextStats: Stats) => {
     const map = mapRef.current;
@@ -89,6 +132,43 @@ export default function App() {
     const bounds = L.latLngBounds([[-nextStats.height, 0], [0, nextStats.width]]);
     map.fitBounds(bounds, { padding: [32, 32] });
     map.setMaxBounds([[-nextStats.height * 2.5, -nextStats.width], [nextStats.height, nextStats.width * 2]]);
+  }, []);
+
+  const fitRoute = useCallback((points: Array<{ x: number; y: number }>) => {
+    const map = mapRef.current;
+    if (!map || points.length === 0) return;
+    const bounds = L.latLngBounds(points.map((pt) => ll(pt.x, pt.y)));
+    map.fitBounds(bounds, { padding: [72, 72] });
+  }, []);
+
+  const loadMinimap = useCallback(async () => {
+    const data = await api.minimap();
+    setMinimapData(data);
+    return data;
+  }, []);
+
+  const flashCongestedEdge = useCallback((edge: EdgeDTO) => {
+    if (highlightTimerRef.current !== null) {
+      window.clearInterval(highlightTimerRef.current);
+      highlightTimerRef.current = null;
+    }
+    setHighlightedEdge(edge);
+    setHighlightVisible(true);
+    mapRef.current?.panTo(ll((edge.x1 + edge.x2) / 2, (edge.y1 + edge.y2) / 2));
+    setOk(`定位拥堵道路 ${edge.u} - ${edge.v}`);
+    let ticks = 0;
+    highlightTimerRef.current = window.setInterval(() => {
+      ticks += 1;
+      setHighlightVisible((visible) => !visible);
+      if (ticks >= 8) {
+        if (highlightTimerRef.current !== null) {
+          window.clearInterval(highlightTimerRef.current);
+          highlightTimerRef.current = null;
+        }
+        setHighlightVisible(true);
+        setHighlightedEdge(null);
+      }
+    }, 220);
   }, []);
 
   const resizeCanvases = useCallback(() => {
@@ -354,6 +434,30 @@ export default function App() {
       drawPathLine(ctx, trafficPath, '#7c3aed', true);
     }
 
+    if (highlightedEdge && highlightVisible) {
+      const a = mapPoint(highlightedEdge.x1, highlightedEdge.y1);
+      const b = mapPoint(highlightedEdge.x2, highlightedEdge.y2);
+      if (a && b) {
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#fef08a';
+        ctx.globalAlpha = 0.78;
+        ctx.lineWidth = 16;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.strokeStyle = '#dc2626';
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     const marker = (v: VertexDTO | null, label: string, color: string) => {
       if (!v) return;
       const p = mapPoint(v.x, v.y);
@@ -391,7 +495,93 @@ export default function App() {
         ctx.fillText('!', p.x - 4, p.y + 6);
       }
     }
-  }, [activeTrace, drawPathLine, end, incident, layers.trace, mapPoint, start, staticPath, traceIndex, trafficPath]);
+  }, [activeTrace, drawPathLine, end, highlightedEdge, highlightVisible, incident, layers.trace, mapPoint, start, staticPath, traceIndex, trafficPath]);
+
+  const drawOverview = useCallback(() => {
+    const canvas = overviewCanvasRef.current;
+    if (!canvas || !stats) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.floor(rect.width));
+    const height = Math.max(1, Math.floor(rect.height));
+    const targetW = Math.max(1, Math.floor(width * ratio));
+    const targetH = Math.max(1, Math.floor(height * ratio));
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, 0, width, height);
+    const metrics = overviewMetrics(width, height, stats);
+
+    ctx.save();
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.78;
+    minimapData?.edges.forEach((edge) => {
+      const a = metrics.toScreen(edge.x1, edge.y1);
+      const b = metrics.toScreen(edge.x2, edge.y2);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    });
+    ctx.restore();
+
+    const drawOverviewPath = (path: PathDTO | null, color: string, dashed = false) => {
+      if (!path || path.path.length < 2) return;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.2;
+      ctx.globalAlpha = 0.92;
+      if (dashed) ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      path.path.forEach((pt, idx) => {
+        const p = metrics.toScreen(pt.x, pt.y);
+        if (idx === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+      ctx.stroke();
+      ctx.restore();
+    };
+    drawOverviewPath(staticPath, '#2563eb');
+    drawOverviewPath(trafficPath, '#7c3aed', true);
+
+    if (incident) {
+      const p = metrics.toScreen(incident.x, incident.y);
+      ctx.save();
+      ctx.fillStyle = '#ef444433';
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(4, incident.radius * metrics.scale), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    const map = mapRef.current;
+    if (map) {
+      const b = map.getBounds();
+      const west = clamp(b.getWest(), 0, stats.width);
+      const east = clamp(b.getEast(), 0, stats.width);
+      const north = clamp(-b.getNorth(), 0, stats.height);
+      const south = clamp(-b.getSouth(), 0, stats.height);
+      const a = metrics.toScreen(west, north);
+      const c = metrics.toScreen(east, south);
+      ctx.save();
+      ctx.strokeStyle = '#0f172a';
+      ctx.fillStyle = '#2563eb16';
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(a.x, a.y, c.x - a.x, c.y - a.y);
+      ctx.strokeRect(a.x, a.y, c.x - a.x, c.y - a.y);
+      ctx.restore();
+    }
+  }, [incident, minimapData, staticPath, stats, trafficPath]);
 
   const drawAll = useCallback(() => {
     resizeCanvases();
@@ -400,7 +590,8 @@ export default function App() {
     drawVerticesAndCity();
     drawCars();
     drawTraceAndPaths();
-  }, [drawCars, drawHeat, drawRoads, drawTraceAndPaths, drawVerticesAndCity, resizeCanvases]);
+    drawOverview();
+  }, [drawCars, drawHeat, drawOverview, drawRoads, drawTraceAndPaths, drawVerticesAndCity, resizeCanvases]);
 
   const refreshViewport = useCallback(async () => {
     const map = mapRef.current;
@@ -427,7 +618,7 @@ export default function App() {
       minZoom: -5,
       maxZoom: 5,
     });
-    L.control.zoom({ position: 'topright' }).addTo(map);
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
     map.setView([0, 0], 0);
     map.on('mousemove', (e) => {
       const { x, y } = glx(e.latlng.lat, e.latlng.lng);
@@ -474,7 +665,14 @@ export default function App() {
   useEffect(() => { drawAllRef.current = drawAll; }, [drawAll]);
 
   useEffect(() => { drawAll(); }, [drawAll, viewport, cars, staticPath, trafficPath, activeTrace, traceIndex, layers, start, end, incident]);
+  useEffect(() => { drawOverview(); }, [drawOverview]);
   useEffect(() => { if (stats) void refreshViewport(); }, [layers.traffic, stats, refreshViewport]);
+  useEffect(() => {
+    if (!demoRunning) setDemoSteps(makeDemoSteps(selectedMapSize));
+  }, [selectedMapSize]);
+  useEffect(() => () => {
+    if (highlightTimerRef.current !== null) window.clearInterval(highlightTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!tracePlaying || !activeTrace) return;
@@ -510,16 +708,20 @@ export default function App() {
   }, [refreshViewport, simRunning]);
 
   const generateMap = async () => {
-    setBusy('生成 10000 点地图中...');
-    await api.generateMap(10000, 2026);
+    const n = selectedMapSize;
+    setBusy(`生成 ${n} 点地图中...`);
+    setMinimapData(null);
+    setHighlightedEdge(null);
+    await api.generateMap(n, 2026);
     for (;;) {
       const res = await api.generationStatus();
       if (res.status === 'done' && typeof res.data === 'object' && res.data) {
         setStats(res.data);
         fitMap(res.data);
-        setOk('地图生成完毕，可开始演示');
+        setOk(`${res.data.vertices} 点地图生成完毕，可开始演示`);
         await new Promise((r) => setTimeout(r, 100));
         await refreshViewportRef.current?.();
+        await loadMinimap();
         setAnalytics(await api.analytics());
         break;
       }
@@ -580,25 +782,69 @@ export default function App() {
   }
 
   const runDemo = async () => {
-    setDemoSteps((steps) => steps.map((s, i) => ({ ...s, state: i === 0 ? 'active' : 'idle' })));
-    setBusy('执行一键演示剧本...');
-    const demo = await api.demo();
-    if (demo.error) return setError(demo.error);
-    setDemoSteps((steps) => steps.map((s) => ({ ...s, state: 'done' })));
-    setStats(demo.stats);
-    fitMap(demo.stats);
-    setStart(demo.start);
-    setEnd(demo.end);
-    setIncident(demo.incident);
-    setStaticPath(demo.static_path);
-    setTrafficPath(demo.traffic_path);
-    setActiveTrace(demo.static_path);
-    setTraceIndex(0);
-    setTracePlaying(true);
-    setSimRunning(true);
-    setAnalytics(await api.analytics());
-    await refreshViewportRef.current?.();
-    setOk(`演示就绪：事故影响 ${demo.incident.affected_edges} 条边`);
+    const n = selectedMapSize;
+    setDemoRunning(true);
+    setDemoTimeline(0, -1, n);
+    setBusy(`准备 ${n} 点演示地图...`);
+    setMinimapData(null);
+    setTrafficPath(null);
+    setStaticPath(null);
+    setIncident(null);
+    setHighlightedEdge(null);
+    try {
+      const demo = await api.demo(n);
+      if (demo.error) {
+        setError(demo.error);
+        return;
+      }
+
+      setDemoTimeline(1, 0, n);
+      setBusy('启动早高峰交通流...');
+      setStats(demo.stats);
+      fitMap(demo.stats);
+      setSimRunning(true);
+      setAnalytics(await api.analytics());
+      await loadMinimap();
+      await refreshViewportRef.current?.();
+      await sleep(550);
+
+      setDemoTimeline(2, 1, n);
+      setBusy('选择跨城起终点...');
+      setStart(demo.start);
+      setEnd(demo.end);
+      fitRoute([demo.start, demo.end]);
+      await sleep(650);
+
+      setDemoTimeline(3, 2, n);
+      setBusy('注入事故拥堵并刷新路况...');
+      setIncident(demo.incident);
+      await refreshViewportRef.current?.();
+      await sleep(650);
+
+      setDemoTimeline(4, 3, n);
+      setBusy('播放普通路径搜索轨迹...');
+      setStaticPath(demo.static_path);
+      setTrafficPath(null);
+      setActiveTrace(demo.static_path);
+      setTraceIndex(0);
+      setTracePlaying(true);
+      fitRoute(demo.static_path.path);
+      await sleep(1300);
+
+      setBusy('切换到交通感知绕行路径...');
+      setTrafficPath(demo.traffic_path);
+      setActiveTrace(demo.traffic_path);
+      setTraceIndex(0);
+      setTracePlaying(true);
+      await sleep(700);
+
+      setDemoTimeline(null, 4, n);
+      setOk(`演示就绪：事故影响 ${demo.incident.affected_edges} 条边`);
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setDemoRunning(false);
+    }
   };
 
   const searchPois = async (category = poiCategory, limit = 12) => {
@@ -634,6 +880,18 @@ export default function App() {
     return c ? glx(c.lat, c.lng) : { x: fallback.width / 2, y: fallback.height / 2 };
   }
 
+  const handleOverviewClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
+    if (!stats) return;
+    const canvas = overviewCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const metrics = overviewMetrics(rect.width, rect.height, stats);
+    const world = metrics.toWorld(event.clientX - rect.left, event.clientY - rect.top);
+    const x = clamp(world.x, 0, stats.width);
+    const y = clamp(world.y, 0, stats.height);
+    mapRef.current?.panTo(ll(x, y));
+  };
+
   const congestedCount = useMemo(() => {
     if (!analytics) return 0;
     return Number(analytics.level_counts['2'] || 0) + Number(analytics.level_counts['3'] || 0);
@@ -652,7 +910,9 @@ export default function App() {
 
         <section className="panel primary-panel">
           <div className="panel-title">一键演示</div>
-          <button className="command primary" onClick={runDemo}>运行高分演示剧本</button>
+          <button className="command primary" onClick={runDemo} disabled={demoRunning}>
+            {demoRunning && demoStepIndex !== null ? `演示中 ${demoStepIndex + 1}/5` : '运行高分演示剧本'}
+          </button>
           <div className="timeline">
             {demoSteps.map((step) => <div key={step.label} className={`timeline-row ${step.state}`}><span />{step.label}</div>)}
           </div>
@@ -660,8 +920,32 @@ export default function App() {
 
         <section className="panel">
           <div className="panel-title">地图与算法</div>
+          <label className="field">点数
+            <input
+              type="number"
+              min={MAP_SIZE_MIN}
+              max={MAP_SIZE_MAX}
+              step={100}
+              value={mapSize}
+              onChange={(e) => setMapSize(Number(e.target.value))}
+              onBlur={() => setMapSize(selectedMapSize)}
+              disabled={demoRunning}
+            />
+          </label>
+          <div className="size-presets">
+            {MAP_SIZE_PRESETS.map((preset) => (
+              <button
+                key={preset}
+                className={`chip ${selectedMapSize === preset ? 'active' : ''}`}
+                onClick={() => setMapSize(preset)}
+                disabled={demoRunning}
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
           <div className="grid2">
-            <button className="command" onClick={generateMap}>生成 10000 点</button>
+            <button className="command" onClick={generateMap} disabled={demoRunning}>生成 {selectedMapSize} 点</button>
             <button className="command" onClick={simRunning ? stopSimulation : startSimulation}>{simRunning ? '停止模拟' : '启动交通'}</button>
           </div>
           <label className="field">算法
@@ -754,6 +1038,14 @@ export default function App() {
             {trafficPath && <div className="path-row purple">交通路径 {fmt(trafficPath.distance)} · 拥堵段 {trafficPath.congestion_count ?? 0}</div>}
           </div>
 
+          <div className="overview-panel">
+            <div className="overview-header">
+              <span>全景 overview</span>
+              <b>{minimapData ? `${minimapData.vertices.length} 点` : '待生成'}</b>
+            </div>
+            <canvas ref={overviewCanvasRef} onClick={handleOverviewClick} />
+          </div>
+
           <div className="legend">
             {trafficColors.map((c, i) => <span key={c}><i style={{ background: c }} />{['畅通', '缓行', '拥堵', '严重'][i]}</span>)}
           </div>
@@ -763,7 +1055,11 @@ export default function App() {
           <div className="panel-title">Top 拥堵道路</div>
           <div className="edge-table">
             {(analytics?.top_congested_edges || []).map((edge, i) => (
-              <button key={`${edge.u}-${edge.v}`} onClick={() => mapRef.current?.panTo(ll((edge.x1 + edge.x2) / 2, (edge.y1 + edge.y2) / 2))}>
+              <button
+                key={`${edge.u}-${edge.v}`}
+                className={highlightedEdge?.u === edge.u && highlightedEdge?.v === edge.v ? 'active' : ''}
+                onClick={() => flashCongestedEdge(edge)}
+              >
                 <span>#{i + 1}</span>
                 <b>{edge.u} - {edge.v}</b>
                 <em>{fmt(edge.ratio * 100, 1)}%</em>
@@ -793,24 +1089,33 @@ function MiniLine({ data }: { data: AnalyticsDTO['history'] }) {
   const w = 210;
   const h = 54;
   const maxY = Math.max(0.1, ...points.map((p) => p.max_ratio));
+  const latest = points[points.length - 1];
   const d = points.map((p, i) => {
     const x = points.length <= 1 ? 0 : (i / (points.length - 1)) * w;
     const y = h - (p.average_ratio / maxY) * h;
     return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
-  return <svg className="mini-line" viewBox={`0 0 ${w} ${h}`}><path d={d || `M0,${h} L${w},${h}`} /></svg>;
+  return (
+    <div className="chart-card">
+      <div className="chart-title"><span>拥堵趋势</span><b>{latest ? `${fmt(latest.average_ratio * 100, 1)}%` : '—'}</b></div>
+      <svg className="mini-line" viewBox={`0 0 ${w} ${h}`}><path d={d || `M0,${h} L${w},${h}`} /></svg>
+    </div>
+  );
 }
 
 function LevelBars({ counts }: { counts: Record<string, number> }) {
   const total = Math.max(1, Object.values(counts).reduce((a, b) => a + Number(b), 0));
   return (
-    <div className="level-bars">
-      {[0, 1, 2, 3].map((level) => (
-        <div key={level}>
-          <span>{['畅', '缓', '堵', '重'][level]}</span>
-          <i style={{ width: `${(Number(counts[String(level)] || 0) / total) * 100}%`, background: trafficColors[level] }} />
-        </div>
-      ))}
+    <div className="level-card">
+      <div className="chart-title"><span>路况占比</span><b>{total}</b></div>
+      <div className="level-bars">
+        {[0, 1, 2, 3].map((level) => (
+          <div key={level}>
+            <span>{['畅', '缓', '堵', '重'][level]}</span>
+            <i style={{ width: `${(Number(counts[String(level)] || 0) / total) * 100}%`, background: trafficColors[level] }} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
