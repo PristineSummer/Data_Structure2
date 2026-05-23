@@ -306,6 +306,58 @@ def traffic_path():
         return jsonify({"error": str(ex)}), 500
 
 
+@app.route("/api/compare_algorithms")
+def compare_algorithms():
+    if not engine.is_loaded:
+        return jsonify({"error": "no_map"}), 404
+    start_id = int(request.args.get("start", 0))
+    end_id = int(request.args.get("end", 0))
+    trace = request.args.get("trace", "false").lower() == "true"
+    max_trace = max(0, int(request.args.get("max_trace", 2500)))
+    try:
+        astar_res = engine.shortest_path(
+            start_id, end_id, algorithm="astar",
+            trace=trace, max_trace=max_trace,
+        )
+        dijkstra_res = engine.shortest_path(
+            start_id, end_id, algorithm="dijkstra",
+            trace=trace, max_trace=max_trace,
+        )
+        dijkstra_visits = max(1, dijkstra_res.nodes_visited)
+        visit_reduction = (
+            (dijkstra_res.nodes_visited - astar_res.nodes_visited)
+            / dijkstra_visits
+            * 100
+        )
+        return jsonify({
+            "astar": _path_payload(astar_res, include_trace=trace),
+            "dijkstra": _path_payload(dijkstra_res, include_trace=trace),
+            "visit_reduction_percent": round(visit_reduction, 2),
+            "time_delta_ms": round(dijkstra_res.elapsed_ms - astar_res.elapsed_ms, 3),
+            "distance_delta": round(astar_res.distance - dijkstra_res.distance, 6),
+        })
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/route/explain")
+def route_explain():
+    if not engine.is_loaded:
+        return jsonify({"error": "no_map"}), 404
+    start_id = int(request.args.get("start", 0))
+    end_id = int(request.args.get("end", 0))
+    algo = request.args.get("algo", "astar")
+    trace = request.args.get("trace", "false").lower() == "true"
+    max_trace = max(0, int(request.args.get("max_trace", 2500)))
+    try:
+        return jsonify(_route_explain_payload(
+            start_id, end_id, algo,
+            trace=trace, max_trace=max_trace,
+        ))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 # ─── Traffic simulation (F4) ──────────────────────────────────────────────
 
 @app.route("/api/sim/start", methods=["POST"])
@@ -619,6 +671,151 @@ def _trace_edge(u: int, v: int):
     if u_v is not None and v_v is not None:
         payload.update({"x1": u_v.x, "y1": u_v.y, "x2": v_v.x, "y2": v_v.y})
     return payload
+
+
+def _edge_key(u: int, v: int):
+    return (min(u, v), max(u, v))
+
+
+def _edge_payload(u: int, v: int):
+    edge = engine.graph.get_edge(u, v) if engine.graph else None
+    u_v = engine.graph.get_vertex(u) if engine.graph else None
+    v_v = engine.graph.get_vertex(v) if engine.graph else None
+    if edge is None or u_v is None or v_v is None:
+        return None
+
+    cars = float(edge.current_cars)
+    ratio = congestion_ratio(cars, edge.capacity)
+    level = edge.congestion_level()
+    travel_time = edge.travel_time()
+    return {
+        "u": edge.u,
+        "v": edge.v,
+        "x1": u_v.x,
+        "y1": u_v.y,
+        "x2": v_v.x,
+        "y2": v_v.y,
+        "length": round(edge.length, 3),
+        "capacity": edge.capacity,
+        "current_cars": round(cars, 3),
+        "ratio": round(ratio, 4) if math.isfinite(ratio) else ratio,
+        "level": level,
+        "travel_time": round(travel_time, 3) if math.isfinite(travel_time) else travel_time,
+    }
+
+
+def _path_edge_details(path_ids):
+    details = []
+    for i in range(len(path_ids) - 1):
+        payload = _edge_payload(path_ids[i], path_ids[i + 1])
+        if payload is not None:
+            details.append(payload)
+    return details
+
+
+def _worst_edge(details):
+    if not details:
+        return None
+    return max(details, key=lambda row: (row.get("ratio", 0), row.get("current_cars", 0)))
+
+
+def _sum_finite(details, field: str) -> float:
+    total = 0.0
+    for row in details:
+        value = float(row.get(field, 0))
+        if math.isfinite(value):
+            total += value
+    return total
+
+
+def _route_explain_payload(
+    start_id: int,
+    end_id: int,
+    algo: str = "astar",
+    *,
+    trace: bool = False,
+    max_trace: int = 2500,
+):
+    static_res = engine.shortest_path(
+        start_id, end_id, algorithm=algo,
+        trace=trace, max_trace=max_trace,
+    )
+    traffic_res = engine.traffic_aware_path(
+        start_id, end_id, algorithm=algo,
+        trace=trace, max_trace=max_trace,
+    )
+
+    static_details = _path_edge_details(static_res.path)
+    traffic_details = _path_edge_details(traffic_res.path)
+    static_levels = [int(row["level"]) for row in static_details]
+    traffic_levels = [int(row["level"]) for row in traffic_details]
+    static_congested_keys = {
+        _edge_key(row["u"], row["v"]) for row in static_details
+        if int(row.get("level", 0)) >= 2
+    }
+    traffic_keys = {_edge_key(row["u"], row["v"]) for row in traffic_details}
+    traffic_congested = sum(1 for row in traffic_details if int(row.get("level", 0)) >= 2)
+    avoided = len(static_congested_keys - traffic_keys)
+    static_traffic_time = _sum_finite(static_details, "travel_time")
+    traffic_traffic_time = _sum_finite(traffic_details, "travel_time")
+    static_length = _sum_finite(static_details, "length")
+    traffic_length = _sum_finite(traffic_details, "length")
+    time_delta = static_traffic_time - traffic_traffic_time
+    length_delta = traffic_length - static_length
+
+    if not static_res.found or not traffic_res.found:
+        summary = "当前起终点暂未找到完整可通行路径，请重新选择路线。"
+    elif avoided > 0 and time_delta >= 0:
+        summary = (
+            f"静态路线经过 {len(static_congested_keys)} 段拥堵/严重拥堵，"
+            f"交通感知路线绕开了其中 {avoided} 段，预计节省 {time_delta:.1f} 通行时间。"
+        )
+    elif avoided > 0:
+        summary = (
+            f"交通感知路线绕开了 {avoided} 段拥堵道路，但绕行距离增加 {length_delta:.1f}，"
+            "适合展示安全避堵而非最短距离。"
+        )
+    elif traffic_congested < len(static_congested_keys):
+        summary = (
+            f"交通感知路线将拥堵段从 {len(static_congested_keys)} 段降至 {traffic_congested} 段，"
+            "主要收益来自降低高拥堵边的通行代价。"
+        )
+    else:
+        summary = (
+            "当前交通状态下两条路线差异较小，说明起终点之间暂未形成明显绕行机会。"
+        )
+
+    static_payload = _path_payload(static_res, include_trace=trace)
+    traffic_payload = _path_payload(traffic_res, include_trace=trace)
+    traffic_payload.update({
+        "edge_levels": traffic_levels,
+        "static_distance": static_res.distance,
+        "saved": static_res.distance - traffic_res.distance,
+        "congestion_count": traffic_congested,
+    })
+
+    return {
+        "static_path": static_payload,
+        "traffic_path": traffic_payload,
+        "static_edge_levels": static_levels,
+        "traffic_edge_levels": traffic_levels,
+        "static_edge_details": static_details,
+        "traffic_edge_details": traffic_details,
+        "worst_static_edge": _worst_edge(static_details),
+        "worst_traffic_edge": _worst_edge(traffic_details),
+        "static_congested_edges": len(static_congested_keys),
+        "traffic_congested_edges": traffic_congested,
+        "avoided_congested_edges": avoided,
+        "summary": summary,
+        "metrics": {
+            "static_length": round(static_length, 3),
+            "traffic_length": round(traffic_length, 3),
+            "extra_length": round(length_delta, 3),
+            "static_traffic_time": round(static_traffic_time, 3),
+            "traffic_traffic_time": round(traffic_traffic_time, 3),
+            "time_delta": round(time_delta, 3),
+        },
+    }
 
 
 def _traffic_analytics_payload():

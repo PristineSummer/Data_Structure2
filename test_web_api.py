@@ -89,6 +89,37 @@ def test_trace_path_and_traffic_path(client) -> None:
     print("  OK test_trace_path_and_traffic_path")
 
 
+def test_algorithm_compare_api(client) -> None:
+    start, end = corner_vertices(client)
+    compare = assert_status(client.get(
+        f"/api/compare_algorithms?start={start}&end={end}&trace=true&max_trace=40"
+    ))
+    assert {"astar", "dijkstra", "visit_reduction_percent", "time_delta_ms",
+            "distance_delta"}.issubset(compare.keys())
+    assert_trace_payload(compare["astar"])
+    assert_trace_payload(compare["dijkstra"])
+    assert compare["astar"]["nodes_visited"] > 0
+    assert compare["dijkstra"]["nodes_visited"] > 0
+    print("  OK test_algorithm_compare_api")
+
+
+def test_route_explain_api(client) -> None:
+    start, end = corner_vertices(client)
+    explain = assert_status(client.get(
+        f"/api/route/explain?start={start}&end={end}&algo=astar&trace=true&max_trace=40"
+    ))
+    required = {"static_path", "traffic_path", "static_edge_levels", "traffic_edge_levels",
+                "static_edge_details", "traffic_edge_details", "worst_static_edge",
+                "avoided_congested_edges", "summary", "metrics"}
+    assert required.issubset(explain.keys())
+    assert_trace_payload(explain["static_path"])
+    assert_trace_payload(explain["traffic_path"])
+    assert isinstance(explain["summary"], str) and explain["summary"]
+    assert isinstance(explain["static_edge_levels"], list)
+    assert isinstance(explain["traffic_edge_details"], list)
+    print("  OK test_route_explain_api")
+
+
 def test_viewport_traffic_fields_and_analytics(client) -> None:
     started = assert_status(client.post("/api/sim/start", json={
         "cars": 80,
@@ -112,6 +143,25 @@ def test_viewport_traffic_fields_and_analytics(client) -> None:
     assert set(analytics["level_counts"].keys()) == {"0", "1", "2", "3"}
     assert isinstance(analytics["top_congested_edges"], list)
     print("  OK test_viewport_traffic_fields_and_analytics")
+
+
+def test_manual_inject_then_explain(client) -> None:
+    start, end = corner_vertices(client)
+    injected = assert_status(client.post("/api/traffic/inject", json={
+        "x": 1000,
+        "y": 750,
+        "radius": 160,
+        "intensity": 120,
+    }))
+    assert injected["affected"] >= 0
+
+    explain = assert_status(client.get(
+        f"/api/route/explain?start={start}&end={end}&algo=astar&trace=true&max_trace=40"
+    ))
+    assert explain["static_path"]["found"] is True
+    assert explain["traffic_path"]["found"] is True
+    assert isinstance(explain["metrics"], dict)
+    print("  OK test_manual_inject_then_explain")
 
 
 def test_poi_api(client) -> None:
@@ -161,7 +211,10 @@ def run_all_tests() -> None:
     with app.test_client() as client:
         wait_for_generated_map(client)
         test_trace_path_and_traffic_path(client)
+        test_algorithm_compare_api(client)
         test_viewport_traffic_fields_and_analytics(client)
+        test_route_explain_api(client)
+        test_manual_inject_then_explain(client)
         test_poi_api(client)
         test_minimap_api(client)
         test_demo_setup(client)

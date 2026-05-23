@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import L, { Map as LeafletMap } from 'leaflet';
 import { api } from './api';
-import type { AnalyticsDTO, CarDTO, DemoDTO, EdgeDTO, MinimapDTO, PathDTO, POI, SimulationState, Stats, VertexDTO, ViewportDTO } from './types';
+import type { AlgorithmCompareDTO, AnalyticsDTO, CarDTO, DemoDTO, EdgeDTO, ExportSnapshotDTO, HoveredEdgeDTO, MinimapDTO, PathDTO, POI, RouteExplainDTO, SimulationState, Stats, VertexDTO, ViewportDTO } from './types';
 
 const trafficColors = ['#22c55e', '#eab308', '#f97316', '#ef4444'];
 const poiLabels: Record<string, string> = {
@@ -54,6 +54,22 @@ const makeDemoSteps = (n: number): DemoStep[] => [
   { label: '对比静态/避堵路径', state: 'idle' },
 ];
 
+const poiScenarios = [
+  { label: '医院急救', category: 'hospital' },
+  { label: '最近加油', category: 'gas_station' },
+  { label: '停车场', category: 'parking' },
+  { label: '维修救援', category: 'repair' },
+  { label: '餐厅导航', category: 'restaurant' },
+];
+
+function pointToSegmentDistance(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  if (dx === 0 && dy === 0) return Math.hypot(px - ax, py - ay);
+  const t = clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy), 0, 1);
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
 function overviewMetrics(width: number, height: number, stats: Stats) {
   const padding = 8;
   const innerW = Math.max(1, width - padding * 2);
@@ -86,6 +102,11 @@ export default function App() {
   const overviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const statusTimerRef = useRef<number | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
+  const incidentModeRef = useRef(false);
+  const incidentRadiusRef = useRef(150);
+  const incidentIntensityRef = useRef(120);
+  const viewportRef = useRef<ViewportDTO>({ vertices: [], edges: [] });
+  const injectManualIncidentRef = useRef<((x: number, y: number) => Promise<void>) | null>(null);
 
   const [status, setStatus] = useState({ text: '就绪 - 点击生成地图或启动演示', kind: 'idle' });
   const [mapSize, setMapSize] = useState(10000);
@@ -100,6 +121,8 @@ export default function App() {
   const [end, setEnd] = useState<VertexDTO | null>(null);
   const [staticPath, setStaticPath] = useState<PathDTO | null>(null);
   const [trafficPath, setTrafficPath] = useState<PathDTO | null>(null);
+  const [algorithmCompare, setAlgorithmCompare] = useState<AlgorithmCompareDTO | null>(null);
+  const [routeExplain, setRouteExplain] = useState<RouteExplainDTO | null>(null);
   const [activeTrace, setActiveTrace] = useState<PathDTO | null>(null);
   const [traceIndex, setTraceIndex] = useState(0);
   const [tracePlaying, setTracePlaying] = useState(false);
@@ -108,9 +131,14 @@ export default function App() {
   const [simRunning, setSimRunning] = useState(false);
   const [poiCategory, setPoiCategory] = useState('gas_station');
   const [pois, setPois] = useState<POI[]>([]);
+  const [poiScenario, setPoiScenario] = useState<string | null>(null);
   const [incident, setIncident] = useState<DemoDTO['incident'] | null>(null);
+  const [incidentMode, setIncidentMode] = useState(false);
+  const [incidentRadius, setIncidentRadius] = useState(150);
+  const [incidentIntensity, setIncidentIntensity] = useState(120);
   const [highlightedEdge, setHighlightedEdge] = useState<EdgeDTO | null>(null);
   const [highlightVisible, setHighlightVisible] = useState(true);
+  const [hoveredEdge, setHoveredEdge] = useState<HoveredEdgeDTO | null>(null);
   const [demoRunning, setDemoRunning] = useState(false);
   const [demoStepIndex, setDemoStepIndex] = useState<number | null>(null);
   const [demoSteps, setDemoSteps] = useState<DemoStep[]>(() => makeDemoSteps(10000));
@@ -197,6 +225,31 @@ export default function App() {
     if (!map) return null;
     return map.latLngToContainerPoint(ll(x, y));
   }, []);
+
+  const findHoveredEdge = useCallback((point: L.Point): HoveredEdgeDTO | null => {
+    let bestEdge: EdgeDTO | null = null;
+    let bestDistance = Infinity;
+    for (const edge of viewportRef.current.edges) {
+      const a = mapPoint(edge.x1, edge.y1);
+      const b = mapPoint(edge.x2, edge.y2);
+      if (!a || !b) continue;
+      const distance = pointToSegmentDistance(point.x, point.y, a.x, a.y, b.x, b.y);
+      if (distance <= 8 && distance < bestDistance) {
+        bestEdge = edge;
+        bestDistance = distance;
+      }
+    }
+    if (!bestEdge) return null;
+    const edge = bestEdge;
+    const rect = document.getElementById('map-frame')?.getBoundingClientRect();
+    const maxX = Math.max(12, (rect?.width || window.innerWidth) - 250);
+    const maxY = Math.max(12, (rect?.height || window.innerHeight) - 132);
+    return {
+      ...edge,
+      screenX: clamp(point.x + 14, 12, maxX),
+      screenY: clamp(point.y + 14, 12, maxY),
+    };
+  }, [mapPoint]);
 
   const drawRoads = useCallback(() => {
     const canvas = edgeCanvasRef.current;
@@ -452,6 +505,30 @@ export default function App() {
       drawPathLine(ctx, trafficPath, '#7c3aed', true);
     }
 
+    if (hoveredEdge) {
+      const a = mapPoint(hoveredEdge.x1, hoveredEdge.y1);
+      const b = mapPoint(hoveredEdge.x2, hoveredEdge.y2);
+      if (a && b) {
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#0f172a';
+        ctx.globalAlpha = 0.2;
+        ctx.lineWidth = 9;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.strokeStyle = trafficColors[hoveredEdge.level];
+        ctx.globalAlpha = 0.82;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     if (highlightedEdge && highlightVisible) {
       const a = mapPoint(highlightedEdge.x1, highlightedEdge.y1);
       const b = mapPoint(highlightedEdge.x2, highlightedEdge.y2);
@@ -513,7 +590,7 @@ export default function App() {
         ctx.fillText('!', p.x - 4, p.y + 6);
       }
     }
-  }, [activeTrace, drawPathLine, end, highlightedEdge, highlightVisible, incident, layers.trace, mapPoint, start, staticPath, traceIndex, trafficPath]);
+  }, [activeTrace, drawPathLine, end, highlightedEdge, highlightVisible, hoveredEdge, incident, layers.trace, mapPoint, start, staticPath, traceIndex, trafficPath]);
 
   const drawOverview = useCallback(() => {
     const canvas = overviewCanvasRef.current;
@@ -641,11 +718,26 @@ export default function App() {
     map.on('mousemove', (e) => {
       const { x, y } = glx(e.latlng.lat, e.latlng.lng);
       setStatus((prev) => ({ ...prev, text: `${prev.text.split(' | ')[0]} | 坐标 (${fmt(x, 0)}, ${fmt(y, 0)})` }));
+      const point = map.latLngToContainerPoint(e.latlng);
+      const nextHover = findHoveredEdge(point);
+      setHoveredEdge((prev) => {
+        if (!nextHover && !prev) return prev;
+        if (prev && nextHover && prev.u === nextHover.u && prev.v === nextHover.v
+          && Math.abs(prev.screenX - nextHover.screenX) < 4 && Math.abs(prev.screenY - nextHover.screenY) < 4) {
+          return prev;
+        }
+        return nextHover;
+      });
     });
+    map.on('mouseout', () => setHoveredEdge(null));
     map.on('contextmenu', () => clearRoutes());
     map.on('click', async (e) => {
       const { x, y } = glx(e.latlng.lat, e.latlng.lng);
       try {
+        if (incidentModeRef.current) {
+          await injectManualIncidentRef.current?.(x, y);
+          return;
+        }
         const v = await api.nearest(x, y);
         if (!startRef.current) {
           setStart(v);
@@ -679,10 +771,15 @@ export default function App() {
   const drawAllRef = useRef<() => void>(() => {});
   useEffect(() => { startRef.current = start; }, [start]);
   useEffect(() => { endRef.current = end; }, [end]);
+  useEffect(() => { viewportRef.current = viewport; }, [viewport]);
+  useEffect(() => { incidentModeRef.current = incidentMode; }, [incidentMode]);
+  useEffect(() => { incidentRadiusRef.current = incidentRadius; }, [incidentRadius]);
+  useEffect(() => { incidentIntensityRef.current = incidentIntensity; }, [incidentIntensity]);
+  useEffect(() => { injectManualIncidentRef.current = injectManualIncident; });
   useEffect(() => { refreshViewportRef.current = refreshViewport; }, [refreshViewport]);
   useEffect(() => { drawAllRef.current = drawAll; }, [drawAll]);
 
-  useEffect(() => { drawAll(); }, [drawAll, viewport, cars, staticPath, trafficPath, activeTrace, traceIndex, layers, start, end, incident]);
+  useEffect(() => { drawAll(); }, [drawAll, viewport, cars, staticPath, trafficPath, activeTrace, traceIndex, layers, start, end, incident, hoveredEdge]);
   useEffect(() => { drawOverview(); }, [drawOverview]);
   useEffect(() => { if (stats) void refreshViewport(); }, [layers.traffic, stats, refreshViewport]);
   useEffect(() => {
@@ -730,6 +827,10 @@ export default function App() {
     setBusy(`生成 ${n} 点地图中...`);
     setMinimapData(null);
     setHighlightedEdge(null);
+    setHoveredEdge(null);
+    setAlgorithmCompare(null);
+    setRouteExplain(null);
+    setPois([]);
     await api.generateMap(n, 2026);
     for (;;) {
       const res = await api.generationStatus();
@@ -766,11 +867,89 @@ export default function App() {
     setOk('模拟已停止');
   };
 
+  function applyRouteExplain(data: RouteExplainDTO, play: 'static' | 'traffic' | 'none' = 'traffic') {
+    const traffic = {
+      ...data.traffic_path,
+      edge_levels: data.traffic_edge_levels,
+      congestion_count: data.traffic_congested_edges,
+    };
+    setRouteExplain(data);
+    setStaticPath(data.static_path);
+    setTrafficPath(traffic);
+    if (play !== 'none') {
+      setActiveTrace(play === 'static' ? data.static_path : traffic);
+      setTraceIndex(0);
+      setTracePlaying(true);
+    }
+  }
+
+  async function refreshRouteExplainFor(
+    s: VertexDTO | null = startRef.current,
+    e: VertexDTO | null = endRef.current,
+    play: 'static' | 'traffic' | 'none' = 'traffic',
+  ) {
+    if (!s || !e) return null;
+    const data = await api.routeExplain(s.id, e.id, algorithm, true);
+    applyRouteExplain(data, play);
+    return data;
+  }
+
+  async function runAlgorithmCompare() {
+    if (!start || !end) return setError('请先选择起点和终点');
+    setBusy('正在同时对比 A* 与 Dijkstra...');
+    try {
+      const data = await api.compareAlgorithms(start.id, end.id, true);
+      setAlgorithmCompare(data);
+      setActiveTrace(data.astar);
+      setTraceIndex(0);
+      setTracePlaying(true);
+      setOk(`A* 少访问 ${fmt(data.visit_reduction_percent, 1)}% 节点，耗时差 ${fmt(data.time_delta_ms, 2)}ms`);
+    } catch (error) {
+      setError((error as Error).message);
+    }
+  }
+
+  function playCompareTrace(kind: 'astar' | 'dijkstra') {
+    const trace = algorithmCompare?.[kind];
+    if (!trace) return;
+    setActiveTrace(trace);
+    setTraceIndex(0);
+    setTracePlaying(true);
+    setOk(`播放 ${kind === 'astar' ? 'A*' : 'Dijkstra'} 真实搜索轨迹`);
+  }
+
+  async function injectManualIncident(x: number, y: number) {
+    if (!stats) return setError('请先生成地图');
+    setBusy(`注入事故 (${fmt(x, 0)}, ${fmt(y, 0)})...`);
+    try {
+      const result = await api.injectTraffic(
+        x, y,
+        incidentRadiusRef.current,
+        incidentIntensityRef.current,
+      );
+      setIncident({
+        x: result.x,
+        y: result.y,
+        radius: result.radius,
+        intensity: incidentIntensityRef.current,
+        affected_edges: result.affected,
+      });
+      setSimRunning(true);
+      setAnalytics(await api.analytics());
+      await refreshViewportRef.current?.();
+      await refreshRouteExplainFor(startRef.current, endRef.current, 'traffic');
+      setOk(`事故已注入，影响 ${result.affected} 条道路`);
+    } catch (error) {
+      setError((error as Error).message);
+    }
+  }
+
   const runPath = async () => {
     if (!start || !end) return setError('请先在地图上选择起点和终点');
     setBusy('计算静态最短路径并收集算法轨迹...');
     const path = await api.path(start.id, end.id, algorithm, true);
     setStaticPath(path);
+    setRouteExplain(null);
     setActiveTrace(path);
     setTraceIndex(0);
     setTracePlaying(true);
@@ -779,13 +958,9 @@ export default function App() {
 
   const runTrafficPath = async () => {
     if (!start || !end) return setError('请先选择起点和终点');
-    setBusy('计算交通感知路径...');
-    const path = await api.trafficPath(start.id, end.id, algorithm, true);
-    setTrafficPath(path);
-    setActiveTrace(path);
-    setTraceIndex(0);
-    setTracePlaying(true);
-    setOk(`交通路径完成，拥堵路段 ${path.congestion_count ?? 0}`);
+    setBusy('计算交通感知路径并生成决策解释...');
+    const data = await refreshRouteExplainFor(start, end, 'traffic');
+    if (data) setOk(data.summary);
   };
 
   function clearRoutes() {
@@ -793,8 +968,11 @@ export default function App() {
     setEnd(null);
     setStaticPath(null);
     setTrafficPath(null);
+    setAlgorithmCompare(null);
+    setRouteExplain(null);
     setActiveTrace(null);
     setIncident(null);
+    setPoiScenario(null);
     setTraceIndex(0);
     setTracePlaying(false);
   }
@@ -854,6 +1032,12 @@ export default function App() {
       setActiveTrace(demo.traffic_path);
       setTraceIndex(0);
       setTracePlaying(true);
+      try {
+        const explanation = await api.routeExplain(demo.start.id, demo.end.id, 'astar', true);
+        applyRouteExplain(explanation, 'traffic');
+      } catch {
+        setRouteExplain(null);
+      }
       await sleep(700);
 
       setDemoTimeline(null, 4, n);
@@ -878,6 +1062,7 @@ export default function App() {
 
   const routeToPoi = async (poi: POI) => {
     if (!stats) return;
+    setBusy(`规划到 ${poi.name} 的路线...`);
     let s = start;
     if (!s) {
       const center = currentMapCenter(stats);
@@ -891,7 +1076,110 @@ export default function App() {
     setActiveTrace(path);
     setTraceIndex(0);
     setTracePlaying(true);
+    fitRoute(path.path);
+    try {
+      await refreshRouteExplainFor(s, e, 'static');
+    } catch {
+      setRouteExplain(null);
+    }
+    setOk(`已规划到 ${poi.name}，距离 ${fmt(path.distance)}，${path.hops} 跳`);
   };
+
+  const runPoiScenario = async (scenario: { label: string; category: string }) => {
+    if (!stats) return setError('请先生成地图');
+    setPoiScenario(scenario.label);
+    setPoiCategory(scenario.category);
+    const center = start || currentMapCenter(stats);
+    setBusy(`执行场景：${scenario.label}`);
+    try {
+      const data = await api.poiSearch(center.x, center.y, scenario.category, 6, 1800);
+      setPois(data.pois);
+      if (!data.pois[0]) {
+        setError(`附近没有找到${poiNames[scenario.category] || '目标'}`);
+        return;
+      }
+      await routeToPoi(data.pois[0]);
+      setOk(`${scenario.label}：已选择最近的 ${data.pois[0].name}`);
+    } catch (error) {
+      setError((error as Error).message);
+    }
+  };
+
+  function downloadTextFile(filename: string, content: string, type: string) {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function buildMarkdownReport(snapshot: ExportSnapshotDTO) {
+    const compare = snapshot.algorithm_compare;
+    const explain = snapshot.route_explain;
+    const lines = [
+      '# Navigation Demo Report',
+      '',
+      `- 导出时间: ${snapshot.exported_at}`,
+      `- 地图规模: ${snapshot.stats ? `${snapshot.stats.vertices} 节点 / ${snapshot.stats.edges} 道路 / ${snapshot.stats.poi_count} POI` : '未生成'}`,
+      `- 起点: ${snapshot.start ? `ID ${snapshot.start.id} (${fmt(snapshot.start.x, 0)}, ${fmt(snapshot.start.y, 0)})` : '未选择'}`,
+      `- 终点: ${snapshot.end ? `ID ${snapshot.end.id} (${fmt(snapshot.end.x, 0)}, ${fmt(snapshot.end.y, 0)})` : '未选择'}`,
+      `- 事故: ${snapshot.incident ? `(${fmt(snapshot.incident.x, 0)}, ${fmt(snapshot.incident.y, 0)}), 半径 ${snapshot.incident.radius}, 强度 ${snapshot.incident.intensity}, 影响 ${snapshot.incident.affected_edges} 条边` : '无'}`,
+      '',
+      '## 算法竞速',
+      compare
+        ? `- A*: ${fmt(compare.astar.elapsed_ms, 2)}ms, 访问 ${compare.astar.nodes_visited} 节点, ${compare.astar.hops} 跳, 距离 ${fmt(compare.astar.distance)}`
+        : '- 未运行',
+      compare
+        ? `- Dijkstra: ${fmt(compare.dijkstra.elapsed_ms, 2)}ms, 访问 ${compare.dijkstra.nodes_visited} 节点, ${compare.dijkstra.hops} 跳, 距离 ${fmt(compare.dijkstra.distance)}`
+        : '',
+      compare ? `- A* 访问节点减少: ${fmt(compare.visit_reduction_percent, 1)}%, 耗时差: ${fmt(compare.time_delta_ms, 2)}ms` : '',
+      '',
+      '## 路径决策解释',
+      explain ? `- ${explain.summary}` : '- 未生成路径解释',
+      explain ? `- 静态拥堵段: ${explain.static_congested_edges}, 交通路径拥堵段: ${explain.traffic_congested_edges}, 避开拥堵边: ${explain.avoided_congested_edges}` : '',
+      explain ? `- 静态预计通行时间: ${fmt(explain.metrics.static_traffic_time)}, 交通路径预计通行时间: ${fmt(explain.metrics.traffic_traffic_time)}` : '',
+      '',
+      '## 交通态势',
+      snapshot.analytics ? `- 活跃车辆: ${snapshot.analytics.active_cars}` : '- 无交通统计',
+      snapshot.analytics ? `- 平均拥堵率: ${fmt(snapshot.analytics.average_ratio * 100, 1)}%, 最大拥堵率: ${fmt(snapshot.analytics.max_ratio * 100, 1)}%` : '',
+      '',
+      '## POI',
+      snapshot.pois.length
+        ? snapshot.pois.slice(0, 8).map((poi, idx) => `- #${idx + 1} ${poi.name} (${poi.poi_type}), 距离 ${fmt(poi.distance, 0)}, ID ${poi.id}`).join('\n')
+        : '- 未搜索 POI',
+      '',
+    ];
+    return lines.join('\n');
+  }
+
+  function exportDemoResult() {
+    const snapshot: ExportSnapshotDTO = {
+      exported_at: new Date().toISOString(),
+      stats,
+      start,
+      end,
+      incident,
+      algorithm_compare: algorithmCompare,
+      route_explain: routeExplain,
+      analytics,
+      pois,
+    };
+    downloadTextFile(
+      'navigation_demo_snapshot.json',
+      JSON.stringify(snapshot, null, 2),
+      'application/json;charset=utf-8',
+    );
+    downloadTextFile(
+      'navigation_demo_report.md',
+      buildMarkdownReport(snapshot),
+      'text/markdown;charset=utf-8',
+    );
+    setOk('已导出 Markdown 报告和 JSON 快照');
+  }
 
   function currentMapCenter(fallback: Stats) {
     const c = mapRef.current?.getCenter();
@@ -992,6 +1280,60 @@ export default function App() {
         </section>
 
         <section className="panel">
+          <div className="panel-title">A* vs Dijkstra 竞速</div>
+          <button className="command" onClick={runAlgorithmCompare}>开始竞速对比</button>
+          {algorithmCompare && (
+            <>
+              <div className="race-grid">
+                <button className="race-card" onClick={() => playCompareTrace('astar')}>
+                  <span>A*</span>
+                  <b>{fmt(algorithmCompare.astar.elapsed_ms, 2)}ms</b>
+                  <em>{algorithmCompare.astar.nodes_visited} 节点 · {algorithmCompare.astar.hops} 跳</em>
+                </button>
+                <button className="race-card" onClick={() => playCompareTrace('dijkstra')}>
+                  <span>Dijkstra</span>
+                  <b>{fmt(algorithmCompare.dijkstra.elapsed_ms, 2)}ms</b>
+                  <em>{algorithmCompare.dijkstra.nodes_visited} 节点 · {algorithmCompare.dijkstra.hops} 跳</em>
+                </button>
+              </div>
+              <Metric label="访问减少" value={`${fmt(algorithmCompare.visit_reduction_percent, 1)}%`} />
+              <Metric label="耗时差" value={`${fmt(algorithmCompare.time_delta_ms, 2)}ms`} />
+            </>
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="panel-title">事故实验</div>
+          <button className={`command ${incidentMode ? 'purple' : ''}`} onClick={() => setIncidentMode((enabled) => !enabled)}>
+            {incidentMode ? '点击地图注入事故中' : '开启手动事故模式'}
+          </button>
+          <div className="grid2">
+            <label className="mini-field">半径
+              <input type="number" min={30} max={500} step={10} value={incidentRadius} onChange={(e) => setIncidentRadius(Number(e.target.value))} />
+            </label>
+            <label className="mini-field">强度
+              <input type="number" min={10} max={300} step={10} value={incidentIntensity} onChange={(e) => setIncidentIntensity(Number(e.target.value))} />
+            </label>
+          </div>
+          {incident && <Metric label="事故影响边" value={incident.affected_edges} />}
+        </section>
+
+        <section className="panel">
+          <div className="panel-title">POI 场景预设</div>
+          <div className="scenario-grid">
+            {poiScenarios.map((scenario) => (
+              <button
+                key={scenario.category}
+                className={`chip ${poiScenario === scenario.label ? 'active' : ''}`}
+                onClick={() => runPoiScenario(scenario)}
+              >
+                {scenario.label}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel">
           <div className="panel-title">图层</div>
           <Toggle label="道路路况" checked={layers.traffic} onChange={(traffic) => setLayers({ ...layers, traffic })} />
           <Toggle label="拥堵热力图" checked={layers.heat} onChange={(heat) => setLayers({ ...layers, heat })} />
@@ -1019,6 +1361,12 @@ export default function App() {
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-title">展示结果导出</div>
+          <button className="command primary" onClick={exportDemoResult}>导出 Markdown + JSON</button>
+          <div className="export-hint">包含地图规模、路线解释、算法竞速、事故与交通指标</div>
         </section>
       </aside>
 
@@ -1054,7 +1402,22 @@ export default function App() {
             </div>
             {staticPath && <div className="path-row blue">静态路径 {fmt(staticPath.distance)} · {staticPath.hops} 跳 · {fmt(staticPath.elapsed_ms, 2)}ms</div>}
             {trafficPath && <div className="path-row purple">交通路径 {fmt(trafficPath.distance)} · 拥堵段 {trafficPath.congestion_count ?? 0}</div>}
+            {routeExplain && (
+              <div className="explain-row">
+                {routeExplain.summary}
+                <span>避开 {routeExplain.avoided_congested_edges} 段 · 时间差 {fmt(routeExplain.metrics.time_delta)}</span>
+              </div>
+            )}
           </div>
+
+          {hoveredEdge && (
+            <div className="hover-card" style={{ left: hoveredEdge.screenX, top: hoveredEdge.screenY }}>
+              <b>{hoveredEdge.u} - {hoveredEdge.v}</b>
+              <span>长度 {fmt(hoveredEdge.length)} · 容量 {hoveredEdge.capacity}</span>
+              <span>车辆 {fmt(hoveredEdge.current_cars, 1)} · 拥堵率 {fmt(hoveredEdge.ratio * 100, 1)}%</span>
+              <span>等级 {['畅通', '缓行', '拥堵', '严重'][hoveredEdge.level]} · 时间 {fmt(hoveredEdge.travel_time)}</span>
+            </div>
+          )}
 
           <div className="overview-panel">
             <div className="overview-header">

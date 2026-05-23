@@ -1,4 +1,4 @@
-import type { AnalyticsDTO, DemoDTO, MinimapDTO, PathDTO, POI, SimulationState, Stats, VertexDTO, ViewportDTO } from './types';
+import type { AlgorithmCompareDTO, AnalyticsDTO, DemoDTO, MinimapDTO, PathDTO, POI, RouteExplainDTO, SimulationState, Stats, VertexDTO, ViewportDTO } from './types';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
@@ -34,10 +34,16 @@ export const api = {
     getJson<PathDTO>('/api/path', { start, end, algo, trace, max_trace: 2500 }),
   trafficPath: (start: number, end: number, algo: string, trace = true) =>
     getJson<PathDTO>('/api/traffic_path', { start, end, algo, trace, max_trace: 2500 }),
+  compareAlgorithms: (start: number, end: number, trace = true) =>
+    getJson<AlgorithmCompareDTO>('/api/compare_algorithms', { start, end, trace, max_trace: 2500 }),
+  routeExplain: (start: number, end: number, algo: string, trace = true) =>
+    getJson<RouteExplainDTO>('/api/route/explain', { start, end, algo, trace, max_trace: 2500 }),
   simStart: (cars = 1800) => postJson<{ status: string }>('/api/sim/start', { cars, density_low: 0.18, density_high: 0.58 }),
   simStop: () => postJson<{ status: string }>('/api/sim/stop', {}),
   simSpeed: (speed: number) => postJson<{ speed: number }>('/api/sim/speed', { speed }),
   simState: () => getJson<SimulationState>('/api/sim/state'),
+  injectTraffic: (x: number, y: number, radius = 150, intensity = 120) =>
+    postJson<{ affected: number; x: number; y: number; radius: number }>('/api/traffic/inject', { x, y, radius, intensity }),
   analytics: () => getJson<AnalyticsDTO>('/api/analytics/traffic'),
   demo: (n = 10000, seed = 2026) => postJson<DemoDTO>('/api/demo/setup', { n, seed }),
   poiCategories: () => getJson<{ categories: Array<{ id: string; label: string }> }>('/api/poi/categories'),

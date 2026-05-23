@@ -126,3 +126,46 @@ export interface DemoDTO {
   metrics: Record<string, number>;
   error?: string;
 }
+
+export interface AlgorithmCompareDTO {
+  astar: PathDTO;
+  dijkstra: PathDTO;
+  visit_reduction_percent: number;
+  time_delta_ms: number;
+  distance_delta: number;
+  error?: string;
+}
+
+export interface RouteExplainDTO {
+  static_path: PathDTO;
+  traffic_path: PathDTO;
+  static_edge_levels: TrafficLevel[];
+  traffic_edge_levels: TrafficLevel[];
+  static_edge_details: EdgeDTO[];
+  traffic_edge_details: EdgeDTO[];
+  worst_static_edge: EdgeDTO | null;
+  worst_traffic_edge: EdgeDTO | null;
+  static_congested_edges: number;
+  traffic_congested_edges: number;
+  avoided_congested_edges: number;
+  summary: string;
+  metrics: Record<string, number>;
+  error?: string;
+}
+
+export interface HoveredEdgeDTO extends EdgeDTO {
+  screenX: number;
+  screenY: number;
+}
+
+export interface ExportSnapshotDTO {
+  exported_at: string;
+  stats: Stats | null;
+  start: VertexDTO | null;
+  end: VertexDTO | null;
+  incident: DemoDTO['incident'] | null;
+  algorithm_compare: AlgorithmCompareDTO | null;
+  route_explain: RouteExplainDTO | null;
+  analytics: AnalyticsDTO | null;
+  pois: POI[];
+}
