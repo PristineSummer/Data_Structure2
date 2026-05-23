@@ -1,8 +1,6 @@
 # Navigation System 后端项目
 
-本项目是《Data Structure Design》导航系统课设的成员 A 后端交付：负责图数据结构、地图生成、KD-Tree 空间查询、Dijkstra/A* 最短路径、交通模拟、交通感知路径、POI 后端能力、测试与性能基准。成员 B 可在此基础上接入 GUI，成员 C 可直接运行测试并整理报告材料。
-
-项目范围不包含 GUI 实现、PPT 制作和可执行程序打包。
+本项目是《Data Structure Design》导航系统课设的导航系统交付：负责图数据结构、地图生成、KD-Tree 空间查询、Dijkstra/A* 最短路径、交通模拟、交通感知路径、POI 后端能力、Web 展示端、测试与性能基准。PySide6 桌面端仍保留原有实现，Web 端由 Flask API + React/Vite/TypeScript 构成。
 
 ## 功能完成情况
 
@@ -31,7 +29,17 @@ python -X utf8 -m pip install -r requirements.txt
 - `scipy`
 - `matplotlib`
 - `PySide6`
+- `Flask`
 - `pytest`
+
+Web 前端开发/构建还需要 Node.js 与 npm：
+
+```powershell
+cd web_client
+npm install
+npm run typecheck
+npm run build
+```
 
 ## 快速开始
 
@@ -55,6 +63,15 @@ from navigation import NavigationEngine
 engine = NavigationEngine()
 engine.load_map("data/generated/city_map.json")
 ```
+
+启动高分展示型 Web 版：
+
+```powershell
+cd <project-root>
+python web_server.py
+```
+
+浏览器访问 `http://localhost:5678/`。Web 端默认使用 10000 点、seed `2026`、`2000x1500` 地图，并提供一键演示、真实算法动画、交通仪表盘、拥堵热力图和 POI 搜索导航。
 
 ## 成员 B：GUI 集成指南
 
@@ -105,6 +122,7 @@ python -X utf8 test_phase1.py
 python -X utf8 test_phase2.py
 python -X utf8 test_traffic_simulator.py
 python -X utf8 test_phase4.py
+python -X utf8 test_web_api.py
 python -X utf8 benchmark_phase4.py
 ```
 
@@ -138,6 +156,10 @@ Data_Structure/
 ├── test_traffic_simulator.py    # 交通模拟测试
 ├── test_phase4.py               # 阶段四 API / POI / DTO 测试
 ├── benchmark_phase4.py          # 10000 点性能基准
+├── test_web_api.py              # Flask Web API / demo / POI / trace 测试
+├── web_client/                  # React + Vite + TypeScript 前端源码
+├── web_ui/                      # Vite 生产构建产物，由 Flask 托管
+├── web_server.py                # Flask API + React history fallback
 ├── README_API.md                # GUI API 文档
 ├── algorithm_analysis.md        # 算法说明和复杂度分析
 ├── implementation_plan.md       # 成员 A 分阶段计划

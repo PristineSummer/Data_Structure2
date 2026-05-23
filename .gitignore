@@ -16,6 +16,8 @@ env/
 
 dist/
 build/
+node_modules/
+*.tsbuildinfo
 *.spec
 
 data/generated/

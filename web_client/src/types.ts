@@ -1,0 +1,122 @@
+export type TrafficLevel = 0 | 1 | 2 | 3;
+
+export interface Stats {
+  vertices: number;
+  edges: number;
+  poi_count: number;
+  connected: boolean;
+  width: number;
+  height: number;
+  seed?: number;
+  simulation_running: boolean;
+}
+
+export interface VertexDTO {
+  id: number;
+  x: number;
+  y: number;
+  is_poi?: boolean;
+  poi_type?: string;
+  poi_name?: string;
+}
+
+export interface EdgeDTO {
+  u: number;
+  v: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  length: number;
+  capacity: number;
+  current_cars: number;
+  ratio: number;
+  level: TrafficLevel;
+  travel_time: number;
+}
+
+export interface ViewportDTO {
+  vertices: VertexDTO[];
+  edges: EdgeDTO[];
+  error?: string;
+}
+
+export interface TraceVertex {
+  id: number;
+  x?: number;
+  y?: number;
+}
+
+export interface TraceEdge {
+  u: number;
+  v: number;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+}
+
+export interface PathDTO {
+  found?: boolean;
+  path: Array<{ x: number; y: number }>;
+  path_vertex_ids: number[];
+  distance: number;
+  hops: number;
+  nodes_visited: number;
+  elapsed_ms: number;
+  algorithm: string;
+  edge_levels?: TrafficLevel[];
+  static_distance?: number;
+  saved?: number;
+  congestion_count?: number;
+  trace_truncated: boolean;
+  visited: TraceVertex[];
+  relaxed_edges: TraceEdge[];
+  error?: string;
+}
+
+export interface CarDTO {
+  x: number;
+  y: number;
+}
+
+export interface SimulationState {
+  time_step: number;
+  total_cars: number;
+  active_cars: number;
+  average_ratio: number;
+  max_ratio: number;
+  cars?: CarDTO[];
+  error?: string;
+}
+
+export interface AnalyticsDTO {
+  time_step: number;
+  active_cars: number;
+  average_ratio: number;
+  max_ratio: number;
+  level_counts: Record<string, number>;
+  top_congested_edges: EdgeDTO[];
+  history: Array<{ time_step: number; average_ratio: number; max_ratio: number; active_cars: number }>;
+  error?: string;
+}
+
+export interface POI {
+  id: number;
+  x: number;
+  y: number;
+  distance: number;
+  poi_type: string;
+  name: string;
+}
+
+export interface DemoDTO {
+  stats: Stats;
+  start: VertexDTO;
+  end: VertexDTO;
+  incident: { x: number; y: number; radius: number; intensity: number; affected_edges: number };
+  static_path: PathDTO;
+  traffic_path: PathDTO;
+  metrics: Record<string, number>;
+  error?: string;
+}

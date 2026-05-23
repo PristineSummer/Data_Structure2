@@ -47,6 +47,9 @@ class PathResult:
         nodes_visited:  搜索过程中访问过的节点数（用于性能对比）。
         elapsed_ms:     搜索耗时（毫秒）。
         algorithm:      使用的算法名称。
+        visited:        可选搜索动画轨迹：节点弹出顺序。
+        relaxed_edges:  可选搜索动画轨迹：成功松弛的边。
+        trace_truncated: 搜索轨迹是否因 max_trace 截断。
     """
     found: bool = False
     distance: float = float('inf')
@@ -55,6 +58,9 @@ class PathResult:
     nodes_visited: int = 0
     elapsed_ms: float = 0.0
     algorithm: str = ""
+    visited: List[int] = field(default_factory=list)
+    relaxed_edges: List[Tuple[int, int]] = field(default_factory=list)
+    trace_truncated: bool = False
 
     def __repr__(self) -> str:
         if not self.found:
@@ -115,6 +121,9 @@ def dijkstra(
     start_id: int,
     end_id: int,
     weight_func: WeightFunc = default_weight,
+    *,
+    trace: bool = False,
+    max_trace: int = 2500,
 ) -> PathResult:
     """
     使用 Dijkstra 算法查找从 start_id 到 end_id 的最短路径。
@@ -142,6 +151,7 @@ def dijkstra(
     t_start = time.perf_counter()
 
     result = PathResult(algorithm="dijkstra")
+    max_trace = max(0, int(max_trace))
 
     # 验证起终点
     if not graph.has_vertex(start_id) or not graph.has_vertex(end_id):
@@ -154,6 +164,7 @@ def dijkstra(
         result.distance = 0.0
         result.path = [start_id]
         result.nodes_visited = 1
+        _record_visit(result, start_id, trace, max_trace)
         result.elapsed_ms = (time.perf_counter() - t_start) * 1000
         return result
 
@@ -177,6 +188,7 @@ def dijkstra(
             continue
         visited.add(u)
         nodes_visited += 1
+        _record_visit(result, u, trace, max_trace)
 
         # 到达终点
         if u == end_id:
@@ -204,6 +216,7 @@ def dijkstra(
                 dist[v] = new_dist
                 prev[v] = u
                 prev_edge[v] = edge
+                _record_relaxed_edge(result, u, v, trace, max_trace)
                 counter += 1
                 heapq.heappush(heap, (new_dist, counter, v))
 
@@ -222,6 +235,9 @@ def astar(
     start_id: int,
     end_id: int,
     weight_func: WeightFunc = default_weight,
+    *,
+    trace: bool = False,
+    max_trace: int = 2500,
 ) -> PathResult:
     """
     使用 A* 算法查找从 start_id 到 end_id 的最短路径。
@@ -252,6 +268,7 @@ def astar(
     t_start = time.perf_counter()
 
     result = PathResult(algorithm="astar")
+    max_trace = max(0, int(max_trace))
 
     if not graph.has_vertex(start_id) or not graph.has_vertex(end_id):
         result.elapsed_ms = (time.perf_counter() - t_start) * 1000
@@ -262,6 +279,7 @@ def astar(
         result.distance = 0.0
         result.path = [start_id]
         result.nodes_visited = 1
+        _record_visit(result, start_id, trace, max_trace)
         result.elapsed_ms = (time.perf_counter() - t_start) * 1000
         return result
 
@@ -296,6 +314,7 @@ def astar(
             continue
         visited.add(u)
         nodes_visited += 1
+        _record_visit(result, u, trace, max_trace)
 
         if u == end_id:
             path = _reconstruct_path(prev, start_id, end_id)
@@ -322,6 +341,7 @@ def astar(
                 g_score[v] = tentative_g
                 prev[v] = u
                 prev_edge[v] = edge
+                _record_relaxed_edge(result, u, v, trace, max_trace)
                 f_v = tentative_g + heuristic(v)
                 counter += 1
                 heapq.heappush(heap, (f_v, counter, v))
@@ -341,6 +361,9 @@ def shortest_path(
     end_id: int,
     algorithm: str = "astar",
     weight_func: WeightFunc = default_weight,
+    *,
+    trace: bool = False,
+    max_trace: int = 2500,
 ) -> PathResult:
     """
     统一的最短路径接口，支持选择算法。
@@ -356,9 +379,9 @@ def shortest_path(
         PathResult 对象。
     """
     if algorithm == "dijkstra":
-        return dijkstra(graph, start_id, end_id, weight_func)
+        return dijkstra(graph, start_id, end_id, weight_func, trace=trace, max_trace=max_trace)
     elif algorithm == "astar":
-        return astar(graph, start_id, end_id, weight_func)
+        return astar(graph, start_id, end_id, weight_func, trace=trace, max_trace=max_trace)
     else:
         raise ValueError(f"Unknown algorithm: {algorithm}. Use 'dijkstra' or 'astar'.")
 
@@ -366,6 +389,25 @@ def shortest_path(
 # ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------
+
+def _record_visit(result: PathResult, vertex_id: int, trace: bool, max_trace: int) -> None:
+    """Record one popped node for GUI animation when tracing is enabled."""
+    if not trace:
+        return
+    if len(result.visited) < max_trace:
+        result.visited.append(vertex_id)
+    else:
+        result.trace_truncated = True
+
+
+def _record_relaxed_edge(result: PathResult, u: int, v: int, trace: bool, max_trace: int) -> None:
+    """Record one successful relaxation edge for GUI animation."""
+    if not trace:
+        return
+    if len(result.relaxed_edges) < max_trace:
+        result.relaxed_edges.append((u, v))
+    else:
+        result.trace_truncated = True
 
 def _reconstruct_path(prev: Dict[int, int], start: int, end: int) -> List[int]:
     """从前驱表回溯路径。"""

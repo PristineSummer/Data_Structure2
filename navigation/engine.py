@@ -395,6 +395,8 @@ class NavigationEngine:
         start_id: int,
         end_id: int,
         algorithm: str = "astar",
+        trace: bool = False,
+        max_trace: int = 2500,
     ) -> PathResult:
         """
         计算静态最短路径（权重 = 欧氏距离）。
@@ -411,6 +413,7 @@ class NavigationEngine:
         return shortest_path(
             self._graph, start_id, end_id,
             algorithm=algorithm, weight_func=default_weight,
+            trace=trace, max_trace=max_trace,
         )
 
     # ---- F5: 交通感知最短路径 ----
@@ -422,6 +425,8 @@ class NavigationEngine:
         algorithm: str = "astar",
         c: float = 1.0,
         threshold: float = 0.8,
+        trace: bool = False,
+        max_trace: int = 2500,
     ) -> PathResult:
         """
         计算交通感知最短路径（权重 = 基于当前交通的通行时间）。
@@ -444,6 +449,7 @@ class NavigationEngine:
         return shortest_path(
             self._graph, start_id, end_id,
             algorithm=algorithm, weight_func=weight_fn,
+            trace=trace, max_trace=max_trace,
         )
 
     # ---- F4: 交通模拟 ----
