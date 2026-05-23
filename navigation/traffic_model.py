@@ -62,15 +62,13 @@ def travel_time(
 def congestion_level(current_cars: float, capacity: int) -> int:
     """
     Return a display-friendly congestion level:
-    0 clear, 1 slow, 2 moderate, 3 heavy, 4 critical.
+    0 clear, 1 slow, 2 congested, 3 severe.
     """
     ratio = congestion_ratio(current_cars, capacity)
-    if ratio <= 0.25:
+    if ratio <= 0.30:
         return 0
-    if ratio <= 0.50:
+    if ratio <= 0.70:
         return 1
-    if ratio <= 0.75:
+    if ratio <= 1.00:
         return 2
-    if ratio <= 1.10:
-        return 3
-    return 4
+    return 3

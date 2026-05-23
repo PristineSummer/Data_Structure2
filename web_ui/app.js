@@ -3,8 +3,8 @@
 // ══════════════════════════════════════════════════════════════
 // 1. Constants
 // ══════════════════════════════════════════════════════════════
-// 5 traffic levels: clear → slow → moderate → heavy → critical
-const TRAFFIC_COLORS = ['#22C55E', '#EAB308', '#F97316', '#EF4444', '#7C3AED'];
+// 4 traffic levels: clear → slow → congested → severe
+const TRAFFIC_COLORS = ['#22C55E', '#EAB308', '#F97316', '#EF4444'];
 const POI_COLORS = {
   restaurant: '#EA580C', gas_station: '#D97706', hospital: '#DC2626',
   hotel: '#7C3AED', school: '#2563EB', park: '#16A34A', mall: '#DB2777',
