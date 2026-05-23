@@ -56,7 +56,7 @@ def _travel_time_for(
 
 
 def _congestion_level_for(current_cars: float, capacity: int) -> int:
-    """Delegate to traffic_model for consistent 5-level congestion grading."""
+    """Delegate to traffic_model for consistent 4-level congestion grading."""
     from .traffic_model import congestion_level as _model_level
     return _model_level(current_cars, capacity)
 

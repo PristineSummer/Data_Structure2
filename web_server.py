@@ -39,8 +39,7 @@ def index():
 def generate_map():
     global _gen_result
     data = request.get_json() or {}
-    n_display = max(100, int(data.get("n", 2000)))  # user-facing number
-    n_actual  = 1000                                 # always generate 1000
+    n_actual = max(100, int(data.get("n", 2000)))
     seed = int(data.get("seed", 2026))
     with _gen_lock:
         _gen_result = {"status": "running", "data": None}
@@ -50,7 +49,6 @@ def generate_map():
         try:
             engine.generate_map(n_vertices=n_actual, seed=seed)
             stats = _get_stats()
-            stats["vertices"] = n_display  # show user's requested count
             with _gen_lock:
                 _gen_result = {"status": "done", "data": stats}
         except Exception as e:
