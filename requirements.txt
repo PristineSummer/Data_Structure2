@@ -1,0 +1,13 @@
+# Navigation System — Python 依赖
+# 使用方式: pip install -r requirements.txt
+
+numpy>=1.24.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+
+# GUI / executable packaging for the final integrated application
+PySide6>=6.8.0
+pyinstaller>=6.10.0
+
+# Test runner
+pytest>=8.3.0

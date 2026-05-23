@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Navigation System · 导航系统</title>
+  <meta name="description" content="基于数据结构的导航系统 — 地图显示、最短路径、交通模拟"/>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── SIDEBAR ───────────────────────────────────────────────── -->
+  <aside id="sidebar">
+
+    <!-- Header -->
+    <div id="sidebar-header">
+      <div id="logo-icon">🧭</div>
+      <div id="logo-text">
+        <div id="logo-title">Navigation System</div>
+        <div id="logo-sub">导航系统 · 数据结构 2026</div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div id="tab-bar">
+      <button class="tab-btn active" data-tab="map"     onclick="switchTab('map')">🗺 地图</button>
+      <button class="tab-btn"        data-tab="query"   onclick="switchTab('query')">🔍 查询</button>
+      <button class="tab-btn"        data-tab="traffic" onclick="switchTab('traffic')">🚦 交通</button>
+    </div>
+
+    <!-- Tab content wrapper -->
+    <div id="tab-body">
+
+      <!-- ── TAB: 地图 ──────────────────────────── -->
+      <div class="tab-panel active" id="tab-map">
+
+        <div class="card accent-blue">
+          <div class="card-title">⚡ 生成地图</div>
+          <div class="form-row">
+            <label>节点数</label>
+            <input type="number" id="inp-n" value="2000" min="100" max="30000" step="500"/>
+          </div>
+          <div class="form-row">
+            <label>随机种子</label>
+            <input type="number" id="inp-seed" value="2026" min="0" max="99999"/>
+          </div>
+          <button class="btn btn-primary" id="btn-generate" onclick="doGenerate()">生成地图</button>
+          <div class="btn-row">
+            <button class="btn btn-outline" onclick="doLoad()">📂 加载</button>
+            <button class="btn btn-outline" onclick="doSave()">💾 保存</button>
+          </div>
+          <div id="gen-progress" class="progress-bar hidden">
+            <div class="progress-inner" id="gen-progress-inner"></div>
+          </div>
+        </div>
+
+        <div class="card accent-green">
+          <div class="card-title">📊 地图信息</div>
+          <div class="info-row"><span class="info-label">节点数</span><span class="info-val" id="stat-v">—</span></div>
+          <div class="info-row"><span class="info-label">边数</span><span class="info-val" id="stat-e">—</span></div>
+          <div class="info-row"><span class="info-label">POI 数量</span><span class="info-val" id="stat-poi">—</span></div>
+          <div class="info-row"><span class="info-label">连通状态</span><span class="info-val" id="stat-conn">—</span></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">👁 显示选项</div>
+          <div class="form-row">
+            <label>代表点稀疏度 (px)</label>
+            <div class="slider-group">
+              <button class="icon-btn" onclick="changeCellPx(-10)">−</button>
+              <span id="cell-px-val">75</span>
+              <button class="icon-btn" onclick="changeCellPx(10)">+</button>
+            </div>
+          </div>
+          <label class="toggle-row">
+            <input type="checkbox" id="chk-poi" checked onchange="refreshViewport()"/>
+            <span>显示 POI 兴趣点</span>
+          </label>
+          <label class="toggle-row">
+            <input type="checkbox" id="chk-traffic" onchange="onTrafficToggle()"/>
+            <span>显示交通流颜色</span>
+          </label>
+          <label class="toggle-row">
+            <input type="checkbox" id="chk-cars" onchange="onCarsToggle()"/>
+            <span>显示车辆（黄点）</span>
+          </label>
+        </div>
+
+      </div><!-- /tab-map -->
+
+      <!-- ── TAB: 查询 ──────────────────────────── -->
+      <div class="tab-panel" id="tab-query">
+
+        <div class="card accent-amber">
+          <div class="card-title">🔍 F1 附近子图</div>
+          <p class="hint">在地图上点击以设置查询中心，或手动输入坐标</p>
+          <div class="form-row">
+            <label>中心 X</label>
+            <input type="number" id="nearby-x" value="1000" step="10"/>
+          </div>
+          <div class="form-row">
+            <label>中心 Y</label>
+            <input type="number" id="nearby-y" value="750" step="10"/>
+          </div>
+          <div class="form-row">
+            <label>最近 k 个点</label>
+            <input type="number" id="nearby-k" value="100" min="10" max="500"/>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-amber" onclick="doNearby()">🔍 查询</button>
+            <button class="btn btn-outline-danger" onclick="clearNearby()">✖ 清除</button>
+          </div>
+          <div id="nearby-result" class="result-block hidden">
+            <div class="info-row"><span class="info-label">中心</span><span class="info-val" id="nb-center">—</span></div>
+            <div class="info-row"><span class="info-label">节点数</span><span class="info-val" id="nb-v">—</span></div>
+            <div class="info-row"><span class="info-label">边数</span><span class="info-val" id="nb-e">—</span></div>
+          </div>
+        </div>
+
+        <div class="card accent-blue">
+          <div class="card-title">🛣 F3 最短路径</div>
+          <p class="hint">在地图上依次点击起点和终点</p>
+          <div class="form-row">
+            <label>算法</label>
+            <select id="algo-sel">
+              <option value="astar">A* (推荐)</option>
+              <option value="dijkstra">Dijkstra</option>
+            </select>
+          </div>
+          <div class="endpoint-display">
+            <div class="endpoint start" id="ep-start">S — 起点未设置</div>
+            <div class="endpoint end"   id="ep-end">E — 终点未设置</div>
+          </div>
+          <button class="btn btn-outline-danger" onclick="clearPath()">✖ 清除路径</button>
+          <div id="path-result" class="result-block hidden">
+            <div class="info-row"><span class="info-label">算法</span><span class="info-val" id="r-algo">—</span></div>
+            <div class="info-row"><span class="info-label">路径距离</span><span class="info-val blue" id="r-dist">—</span></div>
+            <div class="info-row"><span class="info-label">跳数</span><span class="info-val" id="r-hops">—</span></div>
+            <div class="info-row"><span class="info-label">访问节点</span><span class="info-val" id="r-vis">—</span></div>
+            <div class="info-row"><span class="info-label">耗时</span><span class="info-val" id="r-ms">—</span></div>
+          </div>
+        </div>
+
+      </div><!-- /tab-query -->
+
+      <!-- ── TAB: 交通 ──────────────────────────── -->
+      <div class="tab-panel" id="tab-traffic">
+
+        <div class="card accent-green">
+          <div class="card-title">🚗 F4 交通模拟</div>
+          <div class="form-row">
+            <label>初始车辆数</label>
+            <input type="number" id="sim-cars" value="1500" min="0" max="5000" step="50"/>
+          </div>
+          <div class="form-row">
+            <label>初始密度范围</label>
+            <div class="range-inputs">
+              <input type="number" id="sim-dens-lo" value="0.15" min="0" max="1" step="0.05" placeholder="低"/>
+              <span>—</span>
+              <input type="number" id="sim-dens-hi" value="0.55" min="0" max="1" step="0.05" placeholder="高"/>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-success" id="btn-sim-start" onclick="doSimStart()">▶ 启动</button>
+            <button class="btn btn-danger"  id="btn-sim-stop"  onclick="doSimStop()" disabled>⏹ 停止</button>
+          </div>
+          <div class="form-row">
+            <label>播放倍速</label>
+            <div class="slider-group">
+              <button class="icon-btn" onclick="changeSimSpeed(-1)">−</button>
+              <span id="sim-speed-val">5×</span>
+              <button class="icon-btn" onclick="changeSimSpeed(1)">+</button>
+            </div>
+          </div>
+          <div id="sim-stats" class="result-block hidden">
+            <div class="info-row"><span class="info-label">时间步</span><span class="info-val" id="sim-t">—</span></div>
+            <div class="info-row"><span class="info-label">活跃车辆</span><span class="info-val green" id="sim-active">—</span></div>
+            <div class="info-row"><span class="info-label">平均占用率</span><span class="info-val" id="sim-avg">—</span></div>
+            <div class="info-row"><span class="info-label">最大占用率</span><span class="info-val red" id="sim-max">—</span></div>
+          </div>
+
+          <!-- Traffic inject -->
+          <div class="card-sub-title">💥 注入事件</div>
+          <div class="form-row">
+            <label>位置 X</label>
+            <input type="number" id="inj-x" value="1000" step="50"/>
+          </div>
+          <div class="form-row">
+            <label>位置 Y</label>
+            <input type="number" id="inj-y" value="750" step="50"/>
+          </div>
+          <div class="form-row">
+            <label>半径</label>
+            <input type="number" id="inj-r" value="100" min="10" step="10"/>
+          </div>
+          <div class="form-row">
+            <label>强度</label>
+            <input type="number" id="inj-i" value="50" min="1" step="10"/>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-amber" onclick="doInject()">💥 注入</button>
+            <button class="btn btn-outline-danger" onclick="clearInject()">✖ 清除标记</button>
+          </div>
+        </div>
+
+        <div class="card accent-purple">
+          <div class="card-title">🚀 F5 交通感知路径</div>
+          <p class="hint">在地图上选择起终点后即可规划（建议先启动模拟以获取实时交通数据）</p>
+          <div class="form-row">
+            <label>惩罚系数 c</label>
+            <input type="number" id="f5-c" value="1.5" min="0.1" max="10" step="0.1"/>
+          </div>
+          <div class="form-row">
+            <label>拥堵阈值</label>
+            <input type="number" id="f5-thr" value="0.8" min="0.1" max="1" step="0.05"/>
+          </div>
+          <button class="btn btn-purple" id="btn-tpath" onclick="doTrafficPath()" disabled>🚀 规划交通路径</button>
+          <div id="tpath-result" class="result-block hidden">
+            <div class="info-row"><span class="info-label">交通路径距离</span><span class="info-val amber" id="tp-dist">—</span></div>
+            <div class="info-row"><span class="info-label">静态路径距离</span><span class="info-val" id="tp-sdist">—</span></div>
+            <div class="info-row"><span class="info-label">节省距离</span><span class="info-val green" id="tp-saved">—</span></div>
+            <div class="info-row"><span class="info-label">拥堵路段数</span><span class="info-val red" id="tp-cong">—</span></div>
+            <div class="info-row"><span class="info-label">耗时</span><span class="info-val" id="tp-ms">—</span></div>
+          </div>
+          <!-- Traffic legend -->
+          <div class="legend-row">
+            <span class="legend-dot" style="background:#22C55E"></span>畅通
+            <span class="legend-dot" style="background:#EAB308"></span>缓行
+            <span class="legend-dot" style="background:#F97316"></span>拥堵
+            <span class="legend-dot" style="background:#EF4444"></span>严重
+            <span class="legend-dot" style="background:#7C3AED"></span>极堵
+          </div>
+        </div>
+
+        <div class="card accent-blue">
+          <div class="card-title">🕒 历史交通查询</div>
+          <div class="form-row">
+            <label>时间步 T</label>
+            <input type="number" id="hist-t" value="0" min="0"/>
+          </div>
+          <div class="form-row">
+            <label>中心 X</label>
+            <input type="number" id="hist-x" value="1000" step="10"/>
+          </div>
+          <div class="form-row">
+            <label>中心 Y</label>
+            <input type="number" id="hist-y" value="750" step="10"/>
+          </div>
+          <div class="form-row">
+            <label>查询半径</label>
+            <input type="number" id="hist-r" value="300" min="10" step="50"/>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" onclick="doHistory()">🔍 查询历史</button>
+            <button class="btn btn-outline-danger" onclick="clearHistory()">✖ 清除</button>
+          </div>
+          <div id="hist-result" class="result-block hidden">
+            <div class="info-row"><span class="info-label">中心坐标</span><span class="info-val" id="hist-center">—</span></div>
+            <div class="info-row"><span class="info-label">查询时间步</span><span class="info-val" id="hist-time-res">—</span></div>
+            <div class="info-row"><span class="info-label">受影响边数</span><span class="info-val" id="hist-edges">—</span></div>
+          </div>
+        </div>
+
+      </div><!-- /tab-traffic -->
+
+    </div><!-- /tab-body -->
+
+    <!-- Footer hints -->
+    <div id="sidebar-footer">
+      <span>🖱 滚轮缩放</span>
+      <span>✋ 拖拽平移</span>
+      <span>F 适应视口</span>
+      <span>Esc 清除路径</span>
+    </div>
+
+  </aside><!-- /sidebar -->
+
+  <!-- ── MAP ────────────────────────────────────────────────────── -->
+  <div id="map-container">
+    <div id="map"></div>
+
+    <!-- Minimap -->
+    <div id="minimap-wrap">
+      <div id="minimap-header">
+        全景 · Overview
+        <span>点击跳转</span>
+      </div>
+      <canvas id="minimap" width="190" height="142"></canvas>
+    </div>
+
+    <!-- Status bar -->
+    <div id="status-bar">
+      <span id="status-dot" class="status-dot idle"></span>
+      <span id="status-text">就绪 — 请生成或加载地图</span>
+      <span id="coord-display"></span>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
