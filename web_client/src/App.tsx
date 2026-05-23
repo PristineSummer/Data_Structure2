@@ -1088,11 +1088,16 @@ function MiniLine({ data }: { data: AnalyticsDTO['history'] }) {
   const points = data.slice(-40);
   const w = 210;
   const h = 54;
-  const maxY = Math.max(0.1, ...points.map((p) => p.max_ratio));
   const latest = points[points.length - 1];
+  const values = points.map((p) => p.average_ratio);
+  const rawMin = values.length ? Math.min(...values) : 0;
+  const rawMax = values.length ? Math.max(...values) : 0.1;
+  const pad = Math.max(0.006, (rawMax - rawMin) * 0.18);
+  const minY = Math.max(0, rawMin - pad);
+  const maxY = Math.max(minY + 0.012, rawMax + pad);
   const d = points.map((p, i) => {
     const x = points.length <= 1 ? 0 : (i / (points.length - 1)) * w;
-    const y = h - (p.average_ratio / maxY) * h;
+    const y = h - ((p.average_ratio - minY) / (maxY - minY)) * h;
     return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
   return (
