@@ -7,7 +7,7 @@ import type { AlgorithmCompareDTO, AnalyticsDTO, CarDTO, DemoDTO, EdgeDTO, Expor
 const trafficColors = ['#22c55e', '#eab308', '#f97316', '#ef4444'];
 const poiLabels: Record<string, string> = {
   gas_station: '⛽',
-  restaurant: '🍽',
+  restaurant: '🍴',
   parking: 'P',
   repair: '🔧',
   hospital: 'H',
