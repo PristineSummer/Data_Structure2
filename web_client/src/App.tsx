@@ -72,6 +72,10 @@ function overviewMetrics(width: number, height: number, stats: Stats) {
   };
 }
 
+function zoomDetail(zoom: number) {
+  return clamp((zoom + 1.6) / 4.2, 0, 1);
+}
+
 export default function App() {
   const mapRef = useRef<LeafletMap | null>(null);
   const edgeCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -203,13 +207,17 @@ export default function App() {
     const rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
     ctx.lineCap = 'round';
+    const detail = zoomDetail(map.getZoom());
     viewport.edges.forEach((edge) => {
+      if (detail < 0.18 && edge.level < 2 && edge.capacity < 110) return;
       const a = mapPoint(edge.x1, edge.y1);
       const b = mapPoint(edge.x2, edge.y2);
       if (!a || !b) return;
-      const width = clamp(1 + Math.log1p(edge.capacity) / 2.4, 1.4, 5.6);
-      ctx.strokeStyle = layers.traffic ? trafficColors[edge.level] : edge.capacity > 120 ? '#7f8ea3' : '#b8c4d3';
-      ctx.globalAlpha = layers.traffic ? 0.82 : 0.62;
+      const width = clamp(1 + Math.log1p(edge.capacity) / 2.4, 1.4, 5.6) * (0.42 + detail * 0.48);
+      ctx.strokeStyle = layers.traffic && detail > 0.08
+        ? trafficColors[edge.level]
+        : edge.capacity > 120 ? '#7f8ea3' : '#b8c4d3';
+      ctx.globalAlpha = layers.traffic ? 0.22 + detail * 0.42 : 0.42;
       ctx.lineWidth = width;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
@@ -221,21 +229,24 @@ export default function App() {
 
   const drawHeat = useCallback(() => {
     const canvas = heatCanvasRef.current;
+    const map = mapRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
     if (!layers.heat) return;
+    const detail = zoomDetail(map?.getZoom() ?? 0);
     viewport.edges.forEach((edge) => {
+      if (detail < 0.25 && edge.level < 3 && edge.ratio < 1.1) return;
       if (edge.ratio < 0.35 && edge.level < 1) return;
       const a = mapPoint(edge.x1, edge.y1);
       const b = mapPoint(edge.x2, edge.y2);
       if (!a || !b) return;
       const ratio = clamp(edge.ratio, 0, 2.5);
       ctx.strokeStyle = trafficColors[edge.level];
-      ctx.globalAlpha = 0.08 + Math.min(0.28, ratio * 0.12);
-      ctx.lineWidth = 14 + ratio * 8;
+      ctx.globalAlpha = (0.035 + Math.min(0.15, ratio * 0.065)) * (0.35 + detail * 0.65);
+      ctx.lineWidth = (7 + ratio * 4.5) * (0.55 + detail * 0.55);
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
@@ -337,12 +348,13 @@ export default function App() {
 
   const drawPathLine = useCallback((ctx: CanvasRenderingContext2D, path: PathDTO | null, color: string, dashed = false) => {
     if (!path || path.path.length < 2) return;
+    const detail = zoomDetail(mapRef.current?.getZoom() ?? 0);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = color;
-    ctx.lineWidth = 9;
-    ctx.globalAlpha = 0.16;
+    ctx.lineWidth = 4.2 + detail * 3.2;
+    ctx.globalAlpha = 0.07 + detail * 0.08;
     ctx.setLineDash([]);
     ctx.beginPath();
     path.path.forEach((pt, idx) => {
@@ -352,8 +364,8 @@ export default function App() {
       else ctx.lineTo(p.x, p.y);
     });
     ctx.stroke();
-    ctx.globalAlpha = 0.95;
-    ctx.lineWidth = 4;
+    ctx.globalAlpha = 0.58 + detail * 0.28;
+    ctx.lineWidth = 1.8 + detail * 1.8;
     ctx.strokeStyle = color;
     if (dashed) ctx.setLineDash([12, 8]);
     ctx.beginPath();
@@ -409,27 +421,33 @@ export default function App() {
 
     drawPathLine(ctx, staticPath, '#2563eb');
     if (trafficPath?.edge_levels && trafficPath.path.length > 1) {
-      trafficPath.path.slice(0, -1).forEach((pt, i) => {
-        const next = trafficPath.path[i + 1];
-        const a = mapPoint(pt.x, pt.y);
-        const b = mapPoint(next.x, next.y);
-        if (!a || !b) return;
-        const color = trafficColors[trafficPath.edge_levels?.[i] || 0];
-        ctx.strokeStyle = color;
-        ctx.globalAlpha = 0.18;
-        ctx.lineWidth = 9;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-        ctx.globalAlpha = 0.96;
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      });
-      ctx.globalAlpha = 1;
+      const detail = zoomDetail(mapRef.current?.getZoom() ?? 0);
+      if (detail < 0.32) {
+        drawPathLine(ctx, trafficPath, '#7c3aed', true);
+      } else {
+        trafficPath.path.slice(0, -1).forEach((pt, i) => {
+          const next = trafficPath.path[i + 1];
+          const a = mapPoint(pt.x, pt.y);
+          const b = mapPoint(next.x, next.y);
+          if (!a || !b) return;
+          const level = trafficPath.edge_levels?.[i] || 0;
+          const color = trafficColors[level];
+          ctx.strokeStyle = color;
+          ctx.globalAlpha = (0.06 + level * 0.018) + detail * 0.06;
+          ctx.lineWidth = 3.8 + detail * 3.4;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+          ctx.globalAlpha = 0.36 + detail * 0.34;
+          ctx.lineWidth = 1.7 + detail * 1.7;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        });
+        ctx.globalAlpha = 1;
+      }
     } else {
       drawPathLine(ctx, trafficPath, '#7c3aed', true);
     }
