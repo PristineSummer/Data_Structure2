@@ -4,7 +4,7 @@ web_server.py — Navigation System Web Server
 
 启动方式: python web_server.py
 """
-import math, os, sys, threading, time, webbrowser
+import heapq, math, os, sys, threading, time, webbrowser
 from pathlib import Path
 
 try:
@@ -15,6 +15,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).parent))
 from navigation.engine import NavigationEngine
+from navigation.serializer import GraphSerializer
 from navigation.traffic_model import congestion_ratio
 
 # Static files are served by explicit routes below so React history fallback can
@@ -27,6 +28,9 @@ _gen_lock   = threading.Lock()
 _sim_stop_event = threading.Event()   # set() = stop requested
 _sim_thread  = None
 _sim_speed   = 1      # steps executed per 0.05 s tick
+MAP_CACHE_DIR = Path("data/generated")
+MAP_CACHE_VERSION = "web_v1"
+_last_cache_info = {"hit": False, "key": "", "path": ""}
 
 
 # ─── Static files ──────────────────────────────────────────────────────────
@@ -42,7 +46,7 @@ def index():
 def generate_map():
     global _gen_result
     data = request.get_json() or {}
-    n_actual = max(100, int(data.get("n", 10000)))
+    n_actual = max(100, min(30000, int(data.get("n", 30000))))
     seed = int(data.get("seed", 2026))
     with _gen_lock:
         _gen_result = {"status": "running", "data": None}
@@ -50,8 +54,7 @@ def generate_map():
     def _do():
         global _gen_result
         try:
-            engine.generate_map(n_vertices=n_actual, seed=seed)
-            stats = _get_stats()
+            stats = _load_or_generate_map(n_actual, seed=seed)
             with _gen_lock:
                 _gen_result = {"status": "done", "data": stats}
         except Exception as e:
@@ -76,6 +79,7 @@ def load_map():
         return jsonify({"error": f"文件不存在: {filepath}"}), 400
     try:
         engine.load_map(filepath)
+        _set_cache_info(False, "", "")
         return jsonify({"status": "ok", "stats": _get_stats()})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -137,24 +141,48 @@ def viewport():
     if not engine.is_loaded:
         return jsonify({"vertices": [], "edges": []})
     try:
+        stats = engine.get_stats()
+        map_w = float(stats.get("width", 2000))
+        map_h = float(stats.get("height", 1500))
         x_min = float(request.args.get("x_min", 0))
         y_min = float(request.args.get("y_min", 0))
         x_max = float(request.args.get("x_max", 2000))
         y_max = float(request.args.get("y_max", 1500))
         grid_cols      = max(5, int(request.args.get("grid_cols", 40)))
         grid_rows      = max(5, int(request.args.get("grid_rows", 30)))
-        use_rep        = request.args.get("representative", "false").lower() == "true"
+        lod            = request.args.get("lod", "detail").lower()
+        max_vertices   = max(100, int(request.args.get("max_vertices", 3500)))
+        max_edges      = max(100, int(request.args.get("max_edges", 7000)))
+        viewport_area  = abs((x_max - x_min) * (y_max - y_min))
+        map_area       = max(1.0, map_w * map_h)
+        area_ratio     = viewport_area / map_area
+        requested_rep  = request.args.get("representative", "false").lower() == "true"
+        auto_rep       = lod == "auto" and (
+            area_ratio > 0.20
+            or (stats.get("vertices", 0) > 18000 and area_ratio > 0.08)
+        )
+        use_rep        = requested_rep or auto_rep or lod in {"overview", "summary"}
         incl_traffic   = request.args.get("traffic", "false").lower() == "true"
 
         vp = engine.query_viewport_state(
             x_min, y_min, x_max, y_max,
-            use_representative=use_rep,
+            use_representative=False,
             grid_cols=grid_cols, grid_rows=grid_rows,
             include_traffic=incl_traffic,
         )
+        source_vertex_count = len(vp.vertices)
+        if use_rep:
+            display_vertices, _ = engine.query_viewport(
+                x_min, y_min, x_max, y_max,
+                use_representative=True,
+                grid_cols=grid_cols,
+                grid_rows=grid_rows,
+            )
+        else:
+            display_vertices = vp.vertices
 
         vertices = []
-        for v in vp.vertices:
+        for v in display_vertices:
             poi = v.metadata.get("poi") if isinstance(v.metadata, dict) else None
             vertices.append({
                 "id": v.id, "x": v.x, "y": v.y,
@@ -162,6 +190,8 @@ def viewport():
                 "poi_type": str(poi["type"])  if poi else "",
                 "poi_name": str(poi.get("name", poi["type"])) if poi else "",
             })
+            if use_rep and len(vertices) >= max_vertices:
+                break
 
         vid_map = {v.id: v for v in vp.vertices}
         edges = []
@@ -197,8 +227,18 @@ def viewport():
                 "ratio": round(ratio, 4) if math.isfinite(ratio) else ratio,
                 "travel_time": round(travel_time, 3) if math.isfinite(travel_time) else travel_time,
             })
+        edges = _limit_viewport_edges(edges, max_edges, use_rep=use_rep)
 
-        return jsonify({"vertices": vertices, "edges": edges})
+        truncated = source_vertex_count > len(vertices) or len(vp.edges) > len(edges)
+        return jsonify({
+            "vertices": vertices,
+            "edges": edges,
+            "representative": use_rep,
+            "lod": "overview" if use_rep else "detail",
+            "truncated": truncated,
+            "total_vertices_in_view": source_vertex_count,
+            "total_edges_returned": len(edges),
+        })
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
 
@@ -509,12 +549,16 @@ def analytics_traffic():
 @app.route("/api/demo/setup", methods=["POST"])
 def demo_setup():
     data = request.get_json() or {}
-    n = max(100, min(30000, int(data.get("n", 10000))))
+    n = max(100, min(30000, int(data.get("n", 30000))))
     seed = int(data.get("seed", 2026))
     try:
-        current_vertices = engine.get_stats().get("vertices", 0) if engine.is_loaded else 0
-        if not engine.is_loaded or int(current_vertices) != n:
-            engine.generate_map(n_vertices=n, width=2000, height=1500, seed=seed, poi_density=0.08)
+        current = engine.get_stats() if engine.is_loaded else {}
+        if (
+            not engine.is_loaded
+            or int(current.get("vertices", 0)) != n
+            or int(current.get("seed") or -1) != seed
+        ):
+            _load_or_generate_map(n, seed=seed, width=2000, height=1500, poi_density=0.08)
         _start_background_simulation(cars=1800, seed=seed, density=(0.18, 0.58), c=1.0, threshold=0.8)
 
         start_v, end_v, static_res = _choose_demo_route()
@@ -536,6 +580,12 @@ def demo_setup():
 
         static_payload = _path_payload(static_trace_res, include_trace=True)
         traffic_payload = _path_payload(traffic_res, include_trace=True)
+        route_explain = _route_explain_payload(
+            start_v.id, end_v.id, "astar",
+            trace=False, max_trace=0,
+            static_res=static_trace_res,
+            traffic_res=traffic_res,
+        )
         incident["affected_edges"] = affected
 
         return jsonify({
@@ -553,12 +603,98 @@ def demo_setup():
                 "avoided_congested_edges": _count_congested_edges(static_trace_res) - _count_congested_edges(traffic_res),
                 "affected_edges": affected,
             },
+            "route_explain": route_explain,
         })
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
+
+def _set_cache_info(hit: bool, key: str, path: str) -> None:
+    _last_cache_info.update({"hit": bool(hit), "key": key, "path": path})
+
+
+def _map_cache_key(
+    n_vertices: int,
+    *,
+    seed: int,
+    width: float = 2000,
+    height: float = 1500,
+    poi_density: float = 0.08,
+) -> str:
+    density = int(round(poi_density * 10000))
+    return (
+        f"{MAP_CACHE_VERSION}_n{int(n_vertices)}_seed{int(seed)}_"
+        f"w{int(width)}_h{int(height)}_poi{density}"
+    )
+
+
+def _map_cache_path(key: str) -> Path:
+    return MAP_CACHE_DIR / f"{key}.compact.json"
+
+
+def _load_or_generate_map(
+    n_vertices: int,
+    *,
+    seed: int = 2026,
+    width: float = 2000,
+    height: float = 1500,
+    poi_density: float = 0.08,
+):
+    key = _map_cache_key(
+        n_vertices, seed=seed,
+        width=width, height=height,
+        poi_density=poi_density,
+    )
+    cache_path = _map_cache_path(key)
+    if cache_path.exists():
+        try:
+            engine.load_map(str(cache_path))
+            _set_cache_info(True, key, str(cache_path))
+            return _get_stats()
+        except Exception:
+            # Corrupt or stale cache: regenerate in place without failing the demo.
+            pass
+
+    engine.generate_map(
+        n_vertices=n_vertices,
+        width=width,
+        height=height,
+        seed=seed,
+        poi_density=poi_density,
+    )
+    try:
+        if engine.graph is not None:
+            GraphSerializer.save_compact(engine.graph, cache_path)
+    except Exception:
+        pass
+    _set_cache_info(False, key, str(cache_path))
+    return _get_stats()
+
+
+def _limit_viewport_edges(edges, max_edges: int, *, use_rep: bool = False):
+    if len(edges) <= max_edges:
+        return edges
+
+    def score(row):
+        ratio = float(row.get("ratio", 0))
+        if not math.isfinite(ratio):
+            ratio = 10.0
+        return (
+            int(row.get("level", 0)),
+            ratio,
+            int(row.get("capacity", 0)),
+            float(row.get("length", 0)),
+        )
+
+    if use_rep:
+        limited = heapq.nlargest(max_edges, edges, key=score)
+    else:
+        stride = max(1, math.ceil(len(edges) / max_edges))
+        limited = edges[::stride][:max_edges]
+    return limited
+
 
 def _start_background_simulation(
     *,
@@ -735,15 +871,19 @@ def _route_explain_payload(
     *,
     trace: bool = False,
     max_trace: int = 2500,
+    static_res=None,
+    traffic_res=None,
 ):
-    static_res = engine.shortest_path(
-        start_id, end_id, algorithm=algo,
-        trace=trace, max_trace=max_trace,
-    )
-    traffic_res = engine.traffic_aware_path(
-        start_id, end_id, algorithm=algo,
-        trace=trace, max_trace=max_trace,
-    )
+    if static_res is None:
+        static_res = engine.shortest_path(
+            start_id, end_id, algorithm=algo,
+            trace=trace, max_trace=max_trace,
+        )
+    if traffic_res is None:
+        traffic_res = engine.traffic_aware_path(
+            start_id, end_id, algorithm=algo,
+            trace=trace, max_trace=max_trace,
+        )
 
     static_details = _path_edge_details(static_res.path)
     traffic_details = _path_edge_details(traffic_res.path)
@@ -820,7 +960,8 @@ def _route_explain_payload(
 
 def _traffic_analytics_payload():
     level_counts = {"0": 0, "1": 0, "2": 0, "3": 0}
-    top = []
+    top_heap = []
+    counter = 0
     if engine.traffic_simulator is None:
         active_cars = 0
         average_ratio = 0.0
@@ -846,7 +987,7 @@ def _traffic_analytics_payload():
         u_v = engine.graph.get_vertex(u)
         v_v = engine.graph.get_vertex(v)
         if u_v and v_v:
-            top.append({
+            row = {
                 "u": u, "v": v,
                 "x1": u_v.x, "y1": u_v.y,
                 "x2": v_v.x, "y2": v_v.y,
@@ -855,8 +996,15 @@ def _traffic_analytics_payload():
                 "ratio": round(ratio, 4) if math.isfinite(ratio) else ratio,
                 "level": level,
                 "travel_time": round(travel_time, 2) if math.isfinite(travel_time) else travel_time,
-            })
-    top.sort(key=lambda row: (row["ratio"], row["current_cars"]), reverse=True)
+            }
+            score_ratio = float(ratio) if math.isfinite(ratio) else 10.0
+            item = (score_ratio, float(current_cars), counter, row)
+            counter += 1
+            if len(top_heap) < 10:
+                heapq.heappush(top_heap, item)
+            elif item > top_heap[0]:
+                heapq.heapreplace(top_heap, item)
+    top = [item[3] for item in sorted(top_heap, reverse=True)]
 
     history = []
     for t in engine._traffic_history.time_steps[-80:]:
@@ -874,7 +1022,7 @@ def _traffic_analytics_payload():
         "average_ratio": round(average_ratio, 4),
         "max_ratio": round(max_ratio, 4),
         "level_counts": level_counts,
-        "top_congested_edges": top[:10],
+        "top_congested_edges": top,
         "history": history,
     }
 
@@ -937,6 +1085,8 @@ def _get_stats():
         "height":             s.get("height", 1500),
         "seed":               s.get("seed"),
         "simulation_running": s.get("simulation_running", False),
+        "cache_hit":          bool(_last_cache_info.get("hit")),
+        "cache_key":          _last_cache_info.get("key") or "",
     }
 
 

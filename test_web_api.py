@@ -89,6 +89,15 @@ def test_trace_path_and_traffic_path(client) -> None:
     print("  OK test_trace_path_and_traffic_path")
 
 
+def test_map_cache_api(client) -> None:
+    first = wait_for_generated_map(client, n=180, seed=3030)
+    second = wait_for_generated_map(client, n=180, seed=3030)
+    assert "cache_key" in first
+    assert second["cache_key"] == first["cache_key"]
+    assert second["cache_hit"] is True
+    print("  OK test_map_cache_api")
+
+
 def test_algorithm_compare_api(client) -> None:
     start, end = corner_vertices(client)
     compare = assert_status(client.get(
@@ -136,6 +145,16 @@ def test_viewport_traffic_fields_and_analytics(client) -> None:
     assert viewport["edges"], viewport
     required = {"length", "capacity", "current_cars", "ratio", "level", "travel_time"}
     assert required.issubset(viewport["edges"][0].keys())
+
+    lod_viewport = assert_status(client.get(
+        "/api/viewport?x_min=0&y_min=0&x_max=2000&y_max=1500"
+        "&traffic=true&lod=auto&representative=true&max_edges=120&max_vertices=120"
+    ))
+    assert {"representative", "lod", "truncated", "total_vertices_in_view",
+            "total_edges_returned"}.issubset(lod_viewport.keys())
+    assert lod_viewport["representative"] is True
+    assert len(lod_viewport["vertices"]) <= 120
+    assert len(lod_viewport["edges"]) <= 120
 
     analytics = assert_status(client.get("/api/analytics/traffic"))
     assert {"level_counts", "top_congested_edges", "history", "average_ratio",
@@ -202,6 +221,8 @@ def test_demo_setup(client) -> None:
     assert isinstance(demo["static_path"]["visited"], list)
     assert isinstance(demo["traffic_path"]["relaxed_edges"], list)
     assert "affected_edges" in demo["metrics"]
+    assert "route_explain" in demo
+    assert isinstance(demo["route_explain"]["summary"], str)
     client.post("/api/sim/stop")
     print("  OK test_demo_setup")
 
@@ -210,6 +231,7 @@ def run_all_tests() -> None:
     print("Running web API tests...")
     with app.test_client() as client:
         wait_for_generated_map(client)
+        test_map_cache_api(client)
         test_trace_path_and_traffic_path(client)
         test_algorithm_compare_api(client)
         test_viewport_traffic_fields_and_analytics(client)

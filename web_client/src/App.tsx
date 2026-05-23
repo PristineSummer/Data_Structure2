@@ -27,9 +27,9 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 const fmt = (n?: number, digits = 1) => Number.isFinite(n) ? Number(n).toFixed(digits) : '—';
 const MAP_SIZE_MIN = 100;
 const MAP_SIZE_MAX = 30000;
-const MAP_SIZE_PRESETS = [1000, 5000, 10000, 20000];
+const MAP_SIZE_PRESETS = [5000, 10000, 20000, 30000];
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-const normalizeMapSize = (n: number) => Math.round(clamp(Number.isFinite(n) ? n : 10000, MAP_SIZE_MIN, MAP_SIZE_MAX));
+const normalizeMapSize = (n: number) => Math.round(clamp(Number.isFinite(n) ? n : 30000, MAP_SIZE_MIN, MAP_SIZE_MAX));
 
 type StepState = 'idle' | 'active' | 'done';
 
@@ -101,6 +101,7 @@ export default function App() {
   const traceCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const statusTimerRef = useRef<number | null>(null);
+  const lastMouseStatusRef = useRef(0);
   const highlightTimerRef = useRef<number | null>(null);
   const incidentModeRef = useRef(false);
   const incidentRadiusRef = useRef(150);
@@ -109,7 +110,7 @@ export default function App() {
   const injectManualIncidentRef = useRef<((x: number, y: number) => Promise<void>) | null>(null);
 
   const [status, setStatus] = useState({ text: '就绪 - 点击生成地图或启动演示', kind: 'idle' });
-  const [mapSize, setMapSize] = useState(10000);
+  const [mapSize, setMapSize] = useState(30000);
   const [stats, setStats] = useState<Stats | null>(null);
   const [viewport, setViewport] = useState<ViewportDTO>({ vertices: [], edges: [] });
   const [minimapData, setMinimapData] = useState<MinimapDTO | null>(null);
@@ -139,9 +140,10 @@ export default function App() {
   const [highlightedEdge, setHighlightedEdge] = useState<EdgeDTO | null>(null);
   const [highlightVisible, setHighlightVisible] = useState(true);
   const [hoveredEdge, setHoveredEdge] = useState<HoveredEdgeDTO | null>(null);
+  const [showCongestedPanel, setShowCongestedPanel] = useState(false);
   const [demoRunning, setDemoRunning] = useState(false);
   const [demoStepIndex, setDemoStepIndex] = useState<number | null>(null);
-  const [demoSteps, setDemoSteps] = useState<DemoStep[]>(() => makeDemoSteps(10000));
+  const [demoSteps, setDemoSteps] = useState<DemoStep[]>(() => makeDemoSteps(30000));
 
   const mapLoaded = Boolean(stats);
   const selectedMapSize = normalizeMapSize(mapSize);
@@ -227,9 +229,14 @@ export default function App() {
   }, []);
 
   const findHoveredEdge = useCallback((point: L.Point): HoveredEdgeDTO | null => {
+    const map = mapRef.current;
+    const currentViewport = viewportRef.current;
+    if (!map || currentViewport.representative || currentViewport.edges.length > 9000 || zoomDetail(map.getZoom()) < 0.52) {
+      return null;
+    }
     let bestEdge: EdgeDTO | null = null;
     let bestDistance = Infinity;
-    for (const edge of viewportRef.current.edges) {
+    for (const edge of currentViewport.edges) {
       const a = mapPoint(edge.x1, edge.y1);
       const b = mapPoint(edge.x2, edge.y2);
       if (!a || !b) continue;
@@ -692,13 +699,27 @@ export default function App() {
     const map = mapRef.current;
     if (!map || !stats) return;
     const b = map.getBounds();
+    const detail = zoomDetail(map.getZoom());
+    const largeMap = stats.vertices >= 18000;
+    const representative = largeMap && detail < 0.72;
+    const maxEdges = representative
+      ? (detail < 0.30 ? 4200 : 8500)
+      : (largeMap ? 16000 : 22000);
+    const maxVertices = representative
+      ? (detail < 0.30 ? 2400 : 4200)
+      : (largeMap ? 9000 : 14000);
     const data = await api.viewport({
       x_min: b.getWest(),
       y_min: -b.getNorth(),
       x_max: b.getEast(),
       y_max: -b.getSouth(),
       traffic: true,
-      representative: false,
+      representative,
+      lod: largeMap ? 'auto' : 'detail',
+      max_edges: maxEdges,
+      max_vertices: maxVertices,
+      grid_cols: detail < 0.30 ? 64 : 90,
+      grid_rows: detail < 0.30 ? 48 : 68,
     });
     setViewport(data);
   }, [stats]);
@@ -717,7 +738,11 @@ export default function App() {
     map.setView([0, 0], 0);
     map.on('mousemove', (e) => {
       const { x, y } = glx(e.latlng.lat, e.latlng.lng);
-      setStatus((prev) => ({ ...prev, text: `${prev.text.split(' | ')[0]} | 坐标 (${fmt(x, 0)}, ${fmt(y, 0)})` }));
+      const now = performance.now();
+      if (now - lastMouseStatusRef.current > 120) {
+        lastMouseStatusRef.current = now;
+        setStatus((prev) => ({ ...prev, text: `${prev.text.split(' | ')[0]} | 坐标 (${fmt(x, 0)}, ${fmt(y, 0)})` }));
+      }
       const point = map.latLngToContainerPoint(e.latlng);
       const nextHover = findHoveredEdge(point);
       setHoveredEdge((prev) => {
@@ -808,6 +833,7 @@ export default function App() {
 
   useEffect(() => {
     if (!simRunning) return;
+    const intervalMs = (stats?.vertices || 0) >= 18000 ? 1600 : 850;
     const id = window.setInterval(async () => {
       try {
         const state = await api.simState();
@@ -818,9 +844,9 @@ export default function App() {
       } catch {
         // keep the UI resilient during server restarts
       }
-    }, 850);
+    }, intervalMs);
     return () => window.clearInterval(id);
-  }, [refreshViewport, simRunning]);
+  }, [refreshViewport, simRunning, stats?.vertices]);
 
   const generateMap = async () => {
     const n = selectedMapSize;
@@ -837,7 +863,9 @@ export default function App() {
       if (res.status === 'done' && typeof res.data === 'object' && res.data) {
         setStats(res.data);
         fitMap(res.data);
-        setOk(`${res.data.vertices} 点地图生成完毕，可开始演示`);
+        setOk(res.data.cache_hit
+          ? `${res.data.vertices} 点地图已从缓存加载，可开始演示`
+          : `${res.data.vertices} 点地图生成完毕，已写入缓存`);
         await new Promise((r) => setTimeout(r, 100));
         await refreshViewportRef.current?.();
         await loadMinimap();
@@ -1032,11 +1060,20 @@ export default function App() {
       setActiveTrace(demo.traffic_path);
       setTraceIndex(0);
       setTracePlaying(true);
-      try {
-        const explanation = await api.routeExplain(demo.start.id, demo.end.id, 'astar', true);
-        applyRouteExplain(explanation, 'traffic');
-      } catch {
-        setRouteExplain(null);
+      if (demo.route_explain) {
+        setRouteExplain(demo.route_explain);
+        setTrafficPath({
+          ...demo.traffic_path,
+          edge_levels: demo.route_explain.traffic_edge_levels,
+          congestion_count: demo.route_explain.traffic_congested_edges,
+        });
+      } else {
+        try {
+          const explanation = await api.routeExplain(demo.start.id, demo.end.id, 'astar', true);
+          setRouteExplain(explanation);
+        } catch {
+          setRouteExplain(null);
+        }
       }
       await sleep(700);
 
@@ -1343,6 +1380,29 @@ export default function App() {
         </section>
 
         <section className="panel">
+          <div className="panel-title">拥堵道路定位</div>
+          <button className="command" onClick={() => setShowCongestedPanel((show) => !show)}>
+            {showCongestedPanel ? '收起 Top 拥堵道路' : '显示 Top 拥堵道路'}
+          </button>
+          {showCongestedPanel && (
+            <div className="edge-table">
+              {(analytics?.top_congested_edges || []).map((edge, i) => (
+                <button
+                  key={`${edge.u}-${edge.v}`}
+                  className={highlightedEdge?.u === edge.u && highlightedEdge?.v === edge.v ? 'active' : ''}
+                  onClick={() => flashCongestedEdge(edge)}
+                >
+                  <span>#{i + 1}</span>
+                  <b>{edge.u} - {edge.v}</b>
+                  <em>{fmt(edge.ratio * 100, 1)}%</em>
+                </button>
+              ))}
+              {!(analytics?.top_congested_edges || []).length && <div className="empty-note">启动交通模拟后显示拥堵道路</div>}
+            </div>
+          )}
+        </section>
+
+        <section className="panel">
           <div className="panel-title">POI 搜索导航</div>
           <label className="field">服务类型
             <select value={poiCategory} onChange={(e) => setPoiCategory(e.target.value)}>
@@ -1431,23 +1491,6 @@ export default function App() {
             {trafficColors.map((c, i) => <span key={c}><i style={{ background: c }} />{['畅通', '缓行', '拥堵', '严重'][i]}</span>)}
           </div>
         </div>
-
-        <section className="bottom-panel">
-          <div className="panel-title">Top 拥堵道路</div>
-          <div className="edge-table">
-            {(analytics?.top_congested_edges || []).map((edge, i) => (
-              <button
-                key={`${edge.u}-${edge.v}`}
-                className={highlightedEdge?.u === edge.u && highlightedEdge?.v === edge.v ? 'active' : ''}
-                onClick={() => flashCongestedEdge(edge)}
-              >
-                <span>#{i + 1}</span>
-                <b>{edge.u} - {edge.v}</b>
-                <em>{fmt(edge.ratio * 100, 1)}%</em>
-              </button>
-            ))}
-          </div>
-        </section>
       </main>
     </div>
   );

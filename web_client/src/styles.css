@@ -234,7 +234,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .stage {
   min-width: 0;
   display: grid;
-  grid-template-rows: 80px 1fr 112px;
+  grid-template-rows: 80px 1fr;
   background: #e6ebf2;
 }
 .dashboard {
@@ -492,24 +492,20 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   border-radius: 50%;
 }
 
-.bottom-panel {
-  border-top: 1px solid #d8e0ea;
-  background: #fff;
-  padding: 10px 12px;
-}
 .edge-table {
-  margin-top: 8px;
+  max-height: 236px;
+  overflow: auto;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
+  grid-template-columns: 1fr;
+  gap: 6px;
 }
 .edge-table button {
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #f8fafc;
-  padding: 8px;
+  padding: 7px 8px;
   display: grid;
-  grid-template-columns: 32px 1fr auto;
+  grid-template-columns: 28px 1fr auto;
   align-items: center;
   gap: 6px;
   color: #475569;
@@ -522,11 +518,18 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 }
 .edge-table b { color: #172033; font-size: 12px; }
 .edge-table em { color: #dc2626; font-style: normal; font-weight: 800; }
+.empty-note {
+  padding: 8px;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
+}
 
 @media (max-width: 1200px) {
   .shell { grid-template-columns: 330px 1fr; }
   .dashboard { grid-template-columns: repeat(4, 1fr); height: auto; }
-  .stage { grid-template-rows: 170px 1fr 142px; }
+  .stage { grid-template-rows: 170px 1fr; }
   .overview-panel { width: 210px; }
-  .edge-table { grid-template-columns: repeat(2, 1fr); }
 }

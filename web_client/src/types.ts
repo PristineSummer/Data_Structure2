@@ -9,6 +9,8 @@ export interface Stats {
   height: number;
   seed?: number;
   simulation_running: boolean;
+  cache_hit?: boolean;
+  cache_key?: string;
 }
 
 export interface VertexDTO {
@@ -38,6 +40,11 @@ export interface EdgeDTO {
 export interface ViewportDTO {
   vertices: VertexDTO[];
   edges: EdgeDTO[];
+  representative?: boolean;
+  lod?: string;
+  truncated?: boolean;
+  total_vertices_in_view?: number;
+  total_edges_returned?: number;
   error?: string;
 }
 
@@ -124,6 +131,7 @@ export interface DemoDTO {
   static_path: PathDTO;
   traffic_path: PathDTO;
   metrics: Record<string, number>;
+  route_explain?: RouteExplainDTO;
   error?: string;
 }
 
