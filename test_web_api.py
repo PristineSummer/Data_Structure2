@@ -164,6 +164,32 @@ def test_viewport_traffic_fields_and_analytics(client) -> None:
     print("  OK test_viewport_traffic_fields_and_analytics")
 
 
+def test_nearby_and_traffic_history_api(client) -> None:
+    nearby = assert_status(client.get("/api/nearby?x=1000&y=750&k=100"))
+    assert {"vertices", "edges", "center"}.issubset(nearby.keys())
+    assert len(nearby["vertices"]) == 100
+    assert nearby["edges"], nearby
+    assert {"id", "x", "y", "dist"}.issubset(nearby["vertices"][0].keys())
+    assert {"u", "v", "x1", "y1", "x2", "y2", "length"}.issubset(nearby["edges"][0].keys())
+
+    started = assert_status(client.post("/api/sim/start", json={
+        "cars": 90,
+        "seed": 2026,
+        "density_low": 0.10,
+        "density_high": 0.25,
+    }))
+    assert started["status"] == "started"
+    time.sleep(0.15)
+
+    history = assert_status(client.get("/api/traffic/history?x=1000&y=750&t=0&r=2000"))
+    assert {"edges", "center", "time"}.issubset(history.keys())
+    assert history["edges"], history
+    required = {"u", "v", "x1", "y1", "x2", "y2", "length", "capacity",
+                "current_cars", "ratio", "level", "travel_time"}
+    assert required.issubset(history["edges"][0].keys())
+    print("  OK test_nearby_and_traffic_history_api")
+
+
 def test_manual_inject_then_explain(client) -> None:
     start, end = corner_vertices(client)
     injected = assert_status(client.post("/api/traffic/inject", json={
@@ -235,6 +261,7 @@ def run_all_tests() -> None:
         test_trace_path_and_traffic_path(client)
         test_algorithm_compare_api(client)
         test_viewport_traffic_fields_and_analytics(client)
+        test_nearby_and_traffic_history_api(client)
         test_route_explain_api(client)
         test_manual_inject_then_explain(client)
         test_poi_api(client)

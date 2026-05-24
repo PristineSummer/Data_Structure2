@@ -281,7 +281,11 @@ def nearby():
             u_v = vid_map.get(e.u) or engine.graph.get_vertex(e.u)
             v_v = vid_map.get(e.v) or engine.graph.get_vertex(e.v)
             if u_v and v_v:
-                edges.append({"x1": u_v.x, "y1": u_v.y, "x2": v_v.x, "y2": v_v.y})
+                edges.append({
+                    "u": e.u, "v": e.v,
+                    "x1": u_v.x, "y1": u_v.y, "x2": v_v.x, "y2": v_v.y,
+                    "length": round(e.length, 3),
+                })
         return jsonify({"vertices": vertices, "edges": edges, "center": {"x": x, "y": y}})
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
@@ -490,8 +494,14 @@ def traffic_history():
                 state = states.get(key)
                 lv = state.level if state else 0
                 result_edges.append({
+                    "u": e.u, "v": e.v,
                     "x1": u_v.x, "y1": u_v.y, "x2": v_v.x, "y2": v_v.y,
+                    "length": round(e.length, 3),
+                    "capacity": state.capacity if state else e.capacity,
+                    "current_cars": round(state.current_cars, 3) if state else e.current_cars,
+                    "ratio": round(state.ratio, 4) if state else 0,
                     "level": lv,
+                    "travel_time": round(state.travel_time, 3) if state else round(e.travel_time(), 3),
                 })
         return jsonify({"edges": result_edges, "center": {"x": x, "y": y}, "time": t})
     except Exception as ex:

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import L, { Map as LeafletMap } from 'leaflet';
 import { api } from './api';
-import type { AlgorithmCompareDTO, AnalyticsDTO, CarDTO, DemoDTO, EdgeDTO, ExportSnapshotDTO, HoveredEdgeDTO, MinimapDTO, PathDTO, POI, RouteExplainDTO, SimulationState, Stats, VertexDTO, ViewportDTO } from './types';
+import type { AlgorithmCompareDTO, AnalyticsDTO, CarDTO, DemoDTO, EdgeDTO, ExportSnapshotDTO, HoveredEdgeDTO, MinimapDTO, NearbyDTO, PathDTO, POI, RouteExplainDTO, SimulationState, Stats, TrafficHistoryDTO, VertexDTO, ViewportDTO } from './types';
 
 const trafficColors = ['#22c55e', '#eab308', '#f97316', '#ef4444'];
 const poiLabels: Record<string, string> = {
@@ -32,6 +32,7 @@ const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve
 const normalizeMapSize = (n: number) => Math.round(clamp(Number.isFinite(n) ? n : 30000, MAP_SIZE_MIN, MAP_SIZE_MAX));
 
 type StepState = 'idle' | 'active' | 'done';
+type SelectionMode = 'none' | 'start' | 'end';
 
 interface LayerSettings {
   traffic: boolean;
@@ -104,6 +105,7 @@ export default function App() {
   const lastMouseStatusRef = useRef(0);
   const highlightTimerRef = useRef<number | null>(null);
   const incidentModeRef = useRef(false);
+  const selectionModeRef = useRef<SelectionMode>('none');
   const incidentRadiusRef = useRef(150);
   const incidentIntensityRef = useRef(120);
   const viewportRef = useRef<ViewportDTO>({ vertices: [], edges: [] });
@@ -128,7 +130,9 @@ export default function App() {
   const [traceIndex, setTraceIndex] = useState(0);
   const [tracePlaying, setTracePlaying] = useState(false);
   const [traceSpeed, setTraceSpeed] = useState(4);
+  const [traceStepOverride, setTraceStepOverride] = useState<number | null>(null);
   const [algorithm, setAlgorithm] = useState<'astar' | 'dijkstra'>('astar');
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>('none');
   const [simRunning, setSimRunning] = useState(false);
   const [poiCategory, setPoiCategory] = useState('gas_station');
   const [pois, setPois] = useState<POI[]>([]);
@@ -144,6 +148,15 @@ export default function App() {
   const [demoRunning, setDemoRunning] = useState(false);
   const [demoStepIndex, setDemoStepIndex] = useState<number | null>(null);
   const [demoSteps, setDemoSteps] = useState<DemoStep[]>(() => makeDemoSteps(30000));
+  const [nearbyX, setNearbyX] = useState(1000);
+  const [nearbyY, setNearbyY] = useState(750);
+  const [nearbyK, setNearbyK] = useState(100);
+  const [nearbyResult, setNearbyResult] = useState<NearbyDTO | null>(null);
+  const [trafficQueryX, setTrafficQueryX] = useState(1000);
+  const [trafficQueryY, setTrafficQueryY] = useState(750);
+  const [trafficQueryTime, setTrafficQueryTime] = useState(0);
+  const [trafficQueryRadius, setTrafficQueryRadius] = useState(300);
+  const [trafficQueryResult, setTrafficQueryResult] = useState<TrafficHistoryDTO | null>(null);
 
   const mapLoaded = Boolean(stats);
   const selectedMapSize = normalizeMapSize(mapSize);
@@ -159,6 +172,17 @@ export default function App() {
       state: activeIndex === idx ? 'active' : idx <= doneUntil ? 'done' : 'idle',
     })));
   }, [selectedMapSize]);
+
+  const startTracePlayback = useCallback((path: PathDTO, targetMs?: number) => {
+    const maxLen = Math.max(path.visited.length, path.relaxed_edges.length);
+    const targetStep = targetMs && maxLen > 0
+      ? Math.max(1, Math.ceil(maxLen / Math.max(1, targetMs / 70)))
+      : null;
+    setActiveTrace(path);
+    setTraceIndex(0);
+    setTraceStepOverride(targetStep);
+    setTracePlaying(true);
+  }, []);
 
   const fitMap = useCallback((nextStats: Stats) => {
     const map = mapRef.current;
@@ -483,6 +507,51 @@ export default function App() {
       ctx.restore();
     }
 
+    if (nearbyResult) {
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#f59e0b';
+      ctx.globalAlpha = 0.54;
+      ctx.lineWidth = 2.4;
+      nearbyResult.edges.forEach((edge) => {
+        const a = mapPoint(edge.x1, edge.y1);
+        const b = mapPoint(edge.x2, edge.y2);
+        if (!a || !b) return;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      });
+      ctx.fillStyle = '#f59e0b';
+      ctx.globalAlpha = 0.74;
+      nearbyResult.vertices.forEach((v) => {
+        const p = mapPoint(v.x, v.y);
+        if (!p) return;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
+    }
+
+    if (trafficQueryResult) {
+      ctx.save();
+      ctx.lineCap = 'round';
+      trafficQueryResult.edges.forEach((edge) => {
+        const a = mapPoint(edge.x1, edge.y1);
+        const b = mapPoint(edge.x2, edge.y2);
+        if (!a || !b) return;
+        ctx.strokeStyle = trafficColors[edge.level] || '#64748b';
+        ctx.globalAlpha = 0.76;
+        ctx.lineWidth = 3.4;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+
     drawPathLine(ctx, staticPath, '#2563eb');
     if (trafficPath?.edge_levels && trafficPath.path.length > 1) {
       const detail = zoomDetail(mapRef.current?.getZoom() ?? 0);
@@ -564,9 +633,8 @@ export default function App() {
       }
     }
 
-    const marker = (v: VertexDTO | null, label: string, color: string) => {
-      if (!v) return;
-      const p = mapPoint(v.x, v.y);
+    const markerAt = (x: number, y: number, label: string, color: string) => {
+      const p = mapPoint(x, y);
       if (!p) return;
       ctx.fillStyle = color;
       ctx.strokeStyle = '#ffffff';
@@ -581,6 +649,12 @@ export default function App() {
       ctx.textBaseline = 'middle';
       ctx.fillText(label, p.x, p.y);
     };
+    const marker = (v: VertexDTO | null, label: string, color: string) => {
+      if (!v) return;
+      markerAt(v.x, v.y, label, color);
+    };
+    if (nearbyResult) markerAt(nearbyResult.center.x, nearbyResult.center.y, 'Q', '#f59e0b');
+    if (trafficQueryResult) markerAt(trafficQueryResult.center.x, trafficQueryResult.center.y, 'T', '#14b8a6');
     marker(start, 'S', '#2563eb');
     marker(end, 'E', '#dc2626');
 
@@ -601,7 +675,7 @@ export default function App() {
         ctx.fillText('!', p.x - 4, p.y + 6);
       }
     }
-  }, [activeTrace, drawPathLine, end, highlightedEdge, highlightVisible, hoveredEdge, incident, layers.trace, mapPoint, start, staticPath, traceIndex, trafficPath]);
+  }, [activeTrace, drawPathLine, end, highlightedEdge, highlightVisible, hoveredEdge, incident, layers.trace, mapPoint, nearbyResult, start, staticPath, traceIndex, trafficPath, trafficQueryResult]);
 
   const drawOverview = useCallback(() => {
     const canvas = overviewCanvasRef.current;
@@ -767,21 +841,21 @@ export default function App() {
           await injectManualIncidentRef.current?.(x, y);
           return;
         }
+        const mode = selectionModeRef.current;
+        if (mode === 'none') {
+          setOk(`坐标 (${fmt(x, 0)}, ${fmt(y, 0)})；请先点击“设置起点”或“设置终点”`);
+          return;
+        }
         const v = await api.nearest(x, y);
-        if (!startRef.current) {
+        resetRouteResults();
+        if (mode === 'start') {
           setStart(v);
           setOk(`起点已设置 ID:${v.id}`);
-        } else if (!endRef.current) {
+        } else {
           setEnd(v);
           setOk(`终点已设置 ID:${v.id}`);
-        } else {
-          setStart(v);
-          setEnd(null);
-          setStaticPath(null);
-          setTrafficPath(null);
-          setActiveTrace(null);
-          setOk(`重新选择起点 ID:${v.id}`);
         }
+        setSelectionMode('none');
       } catch (error) {
         setError((error as Error).message);
       }
@@ -802,13 +876,14 @@ export default function App() {
   useEffect(() => { endRef.current = end; }, [end]);
   useEffect(() => { viewportRef.current = viewport; }, [viewport]);
   useEffect(() => { incidentModeRef.current = incidentMode; }, [incidentMode]);
+  useEffect(() => { selectionModeRef.current = selectionMode; }, [selectionMode]);
   useEffect(() => { incidentRadiusRef.current = incidentRadius; }, [incidentRadius]);
   useEffect(() => { incidentIntensityRef.current = incidentIntensity; }, [incidentIntensity]);
   useEffect(() => { injectManualIncidentRef.current = injectManualIncident; });
   useEffect(() => { refreshViewportRef.current = refreshViewport; }, [refreshViewport]);
   useEffect(() => { drawAllRef.current = drawAll; }, [drawAll]);
 
-  useEffect(() => { drawAll(); }, [drawAll, viewport, cars, staticPath, trafficPath, activeTrace, traceIndex, layers, start, end, incident, hoveredEdge]);
+  useEffect(() => { drawAll(); }, [drawAll, viewport, cars, staticPath, trafficPath, activeTrace, traceIndex, layers, start, end, incident, hoveredEdge, nearbyResult, trafficQueryResult]);
   useEffect(() => { drawOverview(); }, [drawOverview]);
   useEffect(() => { if (stats) void refreshViewport(); }, [layers.traffic, stats, refreshViewport]);
   useEffect(() => {
@@ -821,9 +896,10 @@ export default function App() {
   useEffect(() => {
     if (!tracePlaying || !activeTrace) return;
     const maxLen = Math.max(activeTrace.visited.length, activeTrace.relaxed_edges.length);
+    const step = traceStepOverride ?? traceSpeed;
     const id = window.setInterval(() => {
       setTraceIndex((idx) => {
-        const next = idx + traceSpeed;
+        const next = idx + step;
         if (next >= maxLen) {
           window.clearInterval(id);
           setTracePlaying(false);
@@ -833,7 +909,7 @@ export default function App() {
       });
     }, 70);
     return () => window.clearInterval(id);
-  }, [activeTrace, tracePlaying, traceSpeed]);
+  }, [activeTrace, tracePlaying, traceSpeed, traceStepOverride]);
 
   useEffect(() => {
     if (!simRunning) return;
@@ -860,6 +936,8 @@ export default function App() {
     setHoveredEdge(null);
     setAlgorithmCompare(null);
     setRouteExplain(null);
+    setNearbyResult(null);
+    setTrafficQueryResult(null);
     setPois([]);
     await api.generateMap(n, 2026);
     for (;;) {
@@ -899,6 +977,17 @@ export default function App() {
     setOk('模拟已停止');
   };
 
+  function resetRouteResults() {
+    setStaticPath(null);
+    setTrafficPath(null);
+    setAlgorithmCompare(null);
+    setRouteExplain(null);
+    setActiveTrace(null);
+    setTraceIndex(0);
+    setTracePlaying(false);
+    setTraceStepOverride(null);
+  }
+
   function applyRouteExplain(data: RouteExplainDTO, play: 'static' | 'traffic' | 'none' = 'traffic') {
     const traffic = {
       ...data.traffic_path,
@@ -909,9 +998,7 @@ export default function App() {
     setStaticPath(data.static_path);
     setTrafficPath(traffic);
     if (play !== 'none') {
-      setActiveTrace(play === 'static' ? data.static_path : traffic);
-      setTraceIndex(0);
-      setTracePlaying(true);
+      startTracePlayback(play === 'static' ? data.static_path : traffic, play === 'traffic' ? 3500 : undefined);
     }
   }
 
@@ -932,9 +1019,7 @@ export default function App() {
     try {
       const data = await api.compareAlgorithms(start.id, end.id, true);
       setAlgorithmCompare(data);
-      setActiveTrace(data.astar);
-      setTraceIndex(0);
-      setTracePlaying(true);
+      startTracePlayback(data.astar);
       setOk(`A* 少访问 ${fmt(data.visit_reduction_percent, 1)}% 节点，耗时差 ${fmt(data.time_delta_ms, 2)}ms`);
     } catch (error) {
       setError((error as Error).message);
@@ -944,9 +1029,7 @@ export default function App() {
   function playCompareTrace(kind: 'astar' | 'dijkstra') {
     const trace = algorithmCompare?.[kind];
     if (!trace) return;
-    setActiveTrace(trace);
-    setTraceIndex(0);
-    setTracePlaying(true);
+    startTracePlayback(trace);
     setOk(`播放 ${kind === 'astar' ? 'A*' : 'Dijkstra'} 真实搜索轨迹`);
   }
 
@@ -977,14 +1060,21 @@ export default function App() {
   }
 
   const runPath = async () => {
-    if (!start || !end) return setError('请先在地图上选择起点和终点');
+    if (!start || !end) return setError('请先点击“设置起点/设置终点”并在地图上选择');
     setBusy('计算静态最短路径并收集算法轨迹...');
+    if (trafficPath) {
+      try {
+        const data = await refreshRouteExplainFor(start, end, 'static');
+        if (data) setOk(`${data.static_path.algorithm} 路径完成，访问 ${data.static_path.nodes_visited} 个节点`);
+        return;
+      } catch {
+        // Fall back to a plain shortest path if the explain endpoint is temporarily unavailable.
+      }
+    }
     const path = await api.path(start.id, end.id, algorithm, true);
     setStaticPath(path);
     setRouteExplain(null);
-    setActiveTrace(path);
-    setTraceIndex(0);
-    setTracePlaying(true);
+    startTracePlayback(path);
     setOk(`${path.algorithm} 路径完成，访问 ${path.nodes_visited} 个节点`);
   };
 
@@ -998,15 +1088,10 @@ export default function App() {
   function clearRoutes() {
     setStart(null);
     setEnd(null);
-    setStaticPath(null);
-    setTrafficPath(null);
-    setAlgorithmCompare(null);
-    setRouteExplain(null);
-    setActiveTrace(null);
+    resetRouteResults();
     setIncident(null);
     setPoiScenario(null);
-    setTraceIndex(0);
-    setTracePlaying(false);
+    setSelectionMode('none');
   }
 
   const runDemo = async () => {
@@ -1019,6 +1104,8 @@ export default function App() {
     setStaticPath(null);
     setIncident(null);
     setHighlightedEdge(null);
+    setNearbyResult(null);
+    setTrafficQueryResult(null);
     try {
       const demo = await api.demo(n);
       if (demo.error) {
@@ -1053,17 +1140,13 @@ export default function App() {
       setBusy('播放普通路径搜索轨迹...');
       setStaticPath(demo.static_path);
       setTrafficPath(null);
-      setActiveTrace(demo.static_path);
-      setTraceIndex(0);
-      setTracePlaying(true);
+      startTracePlayback(demo.static_path);
       fitRoute(demo.static_path.path);
       await sleep(1300);
 
       setBusy('切换到交通感知绕行路径...');
       setTrafficPath(demo.traffic_path);
-      setActiveTrace(demo.traffic_path);
-      setTraceIndex(0);
-      setTracePlaying(true);
+      startTracePlayback(demo.traffic_path, 3500);
       if (demo.route_explain) {
         setRouteExplain(demo.route_explain);
         setTrafficPath({
@@ -1114,9 +1197,7 @@ export default function App() {
     setEnd(e);
     const path = await api.path(s.id, e.id, algorithm, true);
     setStaticPath(path);
-    setActiveTrace(path);
-    setTraceIndex(0);
-    setTracePlaying(true);
+    startTracePlayback(path);
     fitRoute(path.path);
     try {
       await refreshRouteExplainFor(s, e, 'static');
@@ -1145,6 +1226,44 @@ export default function App() {
       setError((error as Error).message);
     }
   };
+
+  async function queryNearbyVertices() {
+    if (!stats) return setError('请先生成地图');
+    const x = Number(nearbyX);
+    const y = Number(nearbyY);
+    const k = Math.round(clamp(Number(nearbyK) || 100, 1, 500));
+    setBusy(`查询 (${fmt(x, 0)}, ${fmt(y, 0)}) 附近 ${k} 个顶点...`);
+    try {
+      const data = await api.nearby(x, y, k);
+      setNearbyK(k);
+      setNearbyResult(data);
+      mapRef.current?.panTo(ll(data.center.x, data.center.y));
+      setOk(`F1 查询完成：${data.vertices.length} 个最近点，${data.edges.length} 条关联边`);
+    } catch (error) {
+      setError((error as Error).message);
+    }
+  }
+
+  async function queryTrafficByTime() {
+    if (!stats) return setError('请先生成地图');
+    const x = Number(trafficQueryX);
+    const y = Number(trafficQueryY);
+    const t = Math.max(0, Math.round(Number(trafficQueryTime) || 0));
+    const r = Math.max(10, Number(trafficQueryRadius) || 300);
+    setBusy(`查询 t=${t} 时刻附近交通流...`);
+    try {
+      const data = await api.trafficHistory(x, y, t, r);
+      setTrafficQueryTime(t);
+      setTrafficQueryRadius(r);
+      setTrafficQueryResult(data);
+      mapRef.current?.panTo(ll(data.center.x, data.center.y));
+      setOk(data.edges.length
+        ? `交通查询完成：${data.edges.length} 条附近道路`
+        : '未找到该时刻附近交通记录，可先启动交通模拟');
+    } catch (error) {
+      setError((error as Error).message);
+    }
+  }
 
   function downloadTextFile(filename: string, content: string, type: string) {
     const blob = new Blob([content], { type });
@@ -1244,6 +1363,42 @@ export default function App() {
     return Number(analytics.level_counts['2'] || 0) + Number(analytics.level_counts['3'] || 0);
   }, [analytics]);
 
+  const trafficQueryLevelCounts = useMemo(() => {
+    const counts: Record<string, number> = { '0': 0, '1': 0, '2': 0, '3': 0 };
+    trafficQueryResult?.edges.forEach((edge) => {
+      counts[String(edge.level)] = (counts[String(edge.level)] || 0) + 1;
+    });
+    return counts;
+  }, [trafficQueryResult]);
+
+  const routeDecisionText = useMemo(() => {
+    if (routeExplain) {
+      const timeDelta = Number(routeExplain.metrics.time_delta || 0);
+      const timeWord = timeDelta >= 0 ? '节省' : '增加';
+      return {
+        text: `静态路线经过 ${routeExplain.static_congested_edges} 段拥堵/严重拥堵，交通感知路线绕开了其中 ${routeExplain.avoided_congested_edges} 段，预计${timeWord} ${fmt(Math.abs(timeDelta))} 通行时间。`,
+        meta: `避开 ${routeExplain.avoided_congested_edges} 段 · 时间差 ${fmt(timeDelta)}`,
+      };
+    }
+    if (staticPath && trafficPath) {
+      const distanceDelta = trafficPath.distance - staticPath.distance;
+      return {
+        text: `交通感知路线当前保留 ${trafficPath.congestion_count ?? 0} 段拥堵/严重拥堵，较静态最短路径${distanceDelta >= 0 ? '绕行' : '缩短'} ${fmt(Math.abs(distanceDelta))}。`,
+        meta: `静态 ${staticPath.hops} 跳 · 交通 ${trafficPath.hops} 跳 · 距离差 ${fmt(distanceDelta)}`,
+      };
+    }
+    if (staticPath) {
+      return {
+        text: '静态最短路径已生成；点击“交通感知路径”后将在这里展示避堵决策解释。',
+        meta: `${staticPath.hops} 跳 · 距离 ${fmt(staticPath.distance)} · ${fmt(staticPath.elapsed_ms, 2)}ms`,
+      };
+    }
+    return {
+      text: '交通感知路径已生成；建议同时生成静态路径以展示完整对比。',
+      meta: `${trafficPath?.hops ?? 0} 跳 · 拥堵段 ${trafficPath?.congestion_count ?? 0}`,
+    };
+  }, [routeExplain, staticPath, trafficPath]);
+
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -1295,6 +1450,14 @@ export default function App() {
             <button className="command" onClick={generateMap} disabled={demoRunning}>生成 {selectedMapSize} 点</button>
             <button className="command" onClick={simRunning ? stopSimulation : startSimulation}>{simRunning ? '停止模拟' : '启动交通'}</button>
           </div>
+          <div className="grid2">
+            <button className={`command ${selectionMode === 'start' ? 'active' : ''}`} onClick={() => setSelectionMode(selectionMode === 'start' ? 'none' : 'start')}>
+              {selectionMode === 'start' ? '正在设置起点' : '设置起点'}
+            </button>
+            <button className={`command ${selectionMode === 'end' ? 'active' : ''}`} onClick={() => setSelectionMode(selectionMode === 'end' ? 'none' : 'end')}>
+              {selectionMode === 'end' ? '正在设置终点' : '设置终点'}
+            </button>
+          </div>
           <label className="field">算法
             <select value={algorithm} onChange={(e) => setAlgorithm(e.target.value as 'astar' | 'dijkstra')}>
               <option value="astar">A* 搜索</option>
@@ -1302,18 +1465,102 @@ export default function App() {
             </select>
           </label>
           <div className="grid2">
-            <button className="command" onClick={runPath}>普通最短路</button>
+            <button className="command" onClick={runPath}>普通最短路径</button>
             <button className="command purple" onClick={runTrafficPath}>交通感知路径</button>
           </div>
           <button className="command ghost" onClick={clearRoutes}>清除路径</button>
+        </section>
+
+        <section className="panel route-summary">
+          <div className="panel-title">路线信息</div>
+          <div className="route-line">
+            <b>S</b>
+            <span>{start ? `ID ${start.id} (${fmt(start.x, 0)}, ${fmt(start.y, 0)})` : '点击“设置起点”后在地图选择'}</span>
+          </div>
+          <div className="route-line">
+            <b>E</b>
+            <span>{end ? `ID ${end.id} (${fmt(end.x, 0)}, ${fmt(end.y, 0)})` : '点击“设置终点”后在地图选择'}</span>
+          </div>
+          {staticPath && <div className="path-row blue">静态路径 {fmt(staticPath.distance)} · {staticPath.hops} 跳 · {fmt(staticPath.elapsed_ms, 2)}ms</div>}
+          {trafficPath && <div className="path-row purple">交通路径 {fmt(trafficPath.distance)} · 拥堵段 {trafficPath.congestion_count ?? 0}</div>}
+          {routeDecisionText ? (
+            <div className="explain-row">
+              {routeDecisionText.text}
+              <span>{routeDecisionText.meta}</span>
+            </div>
+          ) : (
+            <div className="empty-note">路线计算后在这里展示路径解释</div>
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="panel-title">F1 坐标查询</div>
+          <div className="grid2">
+            <label className="mini-field">X 坐标
+              <input type="number" value={nearbyX} onChange={(e) => setNearbyX(Number(e.target.value))} />
+            </label>
+            <label className="mini-field">Y 坐标
+              <input type="number" value={nearbyY} onChange={(e) => setNearbyY(Number(e.target.value))} />
+            </label>
+          </div>
+          <label className="field">最近点数
+            <input type="number" min={1} max={500} value={nearbyK} onChange={(e) => setNearbyK(Number(e.target.value))} />
+          </label>
+          <div className="grid2">
+            <button className="command" onClick={queryNearbyVertices}>查询 {Math.round(clamp(Number(nearbyK) || 100, 1, 500))} 最近点</button>
+            <button className="command" onClick={() => setNearbyResult(null)}>清除查询</button>
+          </div>
+          {nearbyResult && (
+            <>
+              <Metric label="最近点" value={nearbyResult.vertices.length} />
+              <Metric label="关联边" value={nearbyResult.edges.length} />
+              <Metric label="中心坐标" value={`${fmt(nearbyResult.center.x, 0)}, ${fmt(nearbyResult.center.y, 0)}`} />
+            </>
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="panel-title">时间交通查询</div>
+          <div className="grid2">
+            <label className="mini-field">X 坐标
+              <input type="number" value={trafficQueryX} onChange={(e) => setTrafficQueryX(Number(e.target.value))} />
+            </label>
+            <label className="mini-field">Y 坐标
+              <input type="number" value={trafficQueryY} onChange={(e) => setTrafficQueryY(Number(e.target.value))} />
+            </label>
+          </div>
+          <div className="grid2">
+            <label className="mini-field">时间步
+              <input type="number" min={0} value={trafficQueryTime} onChange={(e) => setTrafficQueryTime(Number(e.target.value))} />
+            </label>
+            <label className="mini-field">半径
+              <input type="number" min={10} step={10} value={trafficQueryRadius} onChange={(e) => setTrafficQueryRadius(Number(e.target.value))} />
+            </label>
+          </div>
+          <div className="grid2">
+            <button className="command" onClick={() => setTrafficQueryTime(simState?.time_step ?? trafficQueryTime)}>使用当前时间</button>
+            <button className="command" onClick={queryTrafficByTime}>查询附近交通</button>
+          </div>
+          <button className="command" onClick={() => setTrafficQueryResult(null)}>清除交通查询</button>
+          {trafficQueryResult && (
+            <>
+              <Metric label="附近道路" value={trafficQueryResult.edges.length} />
+              <Metric label="查询时间" value={trafficQueryResult.time} />
+              <div className="query-levels">
+                {[0, 1, 2, 3].map((level) => (
+                  <span key={level}><i style={{ background: trafficColors[level] }} />{['畅', '缓', '堵', '重'][level]} {trafficQueryLevelCounts[String(level)] || 0}</span>
+                ))}
+              </div>
+            </>
+          )}
         </section>
 
         <section className="panel">
           <div className="panel-title">算法动画</div>
           <div className="trace-controls">
             <button className="chip" onClick={() => setTracePlaying((p) => !p)}>{tracePlaying ? '暂停' : '播放'}</button>
-            {[1, 4, 10].map((s) => <button key={s} className={`chip ${traceSpeed === s ? 'active' : ''}`} onClick={() => setTraceSpeed(s)}>{s}x</button>)}
-            <button className="chip" onClick={() => setTraceIndex(0)}>重播</button>
+            {[1, 4, 10].map((s) => <button key={s} className={`chip ${traceSpeed === s && traceStepOverride === null ? 'active' : ''}`} onClick={() => { setTraceStepOverride(null); setTraceSpeed(s); }}>{s}x</button>)}
+            <button className="chip" onClick={() => { setTraceStepOverride(null); setTraceIndex(0); setTracePlaying(Boolean(activeTrace)); }}>重播</button>
           </div>
           <Metric label="访问节点" value={activeTrace?.nodes_visited ?? 0} />
           <Metric label="松弛边数" value={activeTrace?.relaxed_edges.length ?? 0} />
@@ -1455,23 +1702,6 @@ export default function App() {
           <div className={`status ${status.kind}`}>
             <span />
             {status.text}
-          </div>
-
-          <div className="route-card">
-            <div>
-              <b>S</b> {start ? `ID ${start.id} (${fmt(start.x, 0)}, ${fmt(start.y, 0)})` : '点击地图选择起点'}
-            </div>
-            <div>
-              <b>E</b> {end ? `ID ${end.id} (${fmt(end.x, 0)}, ${fmt(end.y, 0)})` : '再次点击选择终点'}
-            </div>
-            {staticPath && <div className="path-row blue">静态路径 {fmt(staticPath.distance)} · {staticPath.hops} 跳 · {fmt(staticPath.elapsed_ms, 2)}ms</div>}
-            {trafficPath && <div className="path-row purple">交通路径 {fmt(trafficPath.distance)} · 拥堵段 {trafficPath.congestion_count ?? 0}</div>}
-            {routeExplain && (
-              <div className="explain-row">
-                {routeExplain.summary}
-                <span>避开 {routeExplain.avoided_congested_edges} 段 · 时间差 {fmt(routeExplain.metrics.time_delta)}</span>
-              </div>
-            )}
           </div>
 
           {hoveredEdge && (

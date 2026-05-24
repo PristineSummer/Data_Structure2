@@ -22,6 +22,27 @@ export interface VertexDTO {
   poi_name?: string;
 }
 
+export interface NearbyVertexDTO extends VertexDTO {
+  dist: number;
+}
+
+export interface NearbyEdgeDTO {
+  u?: number;
+  v?: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  length?: number;
+}
+
+export interface NearbyDTO {
+  center: { x: number; y: number };
+  vertices: NearbyVertexDTO[];
+  edges: NearbyEdgeDTO[];
+  error?: string;
+}
+
 export interface EdgeDTO {
   u: number;
   v: number;
@@ -35,6 +56,28 @@ export interface EdgeDTO {
   ratio: number;
   level: TrafficLevel;
   travel_time: number;
+}
+
+export interface TrafficQueryEdgeDTO {
+  u?: number;
+  v?: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  length?: number;
+  capacity?: number;
+  current_cars?: number;
+  ratio?: number;
+  level: TrafficLevel;
+  travel_time?: number;
+}
+
+export interface TrafficHistoryDTO {
+  center: { x: number; y: number };
+  time: number;
+  edges: TrafficQueryEdgeDTO[];
+  error?: string;
 }
 
 export interface ViewportDTO {

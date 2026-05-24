@@ -1,4 +1,4 @@
-import type { AlgorithmCompareDTO, AnalyticsDTO, DemoDTO, MinimapDTO, PathDTO, POI, RouteExplainDTO, SimulationState, Stats, VertexDTO, ViewportDTO } from './types';
+import type { AlgorithmCompareDTO, AnalyticsDTO, DemoDTO, MinimapDTO, NearbyDTO, PathDTO, POI, RouteExplainDTO, SimulationState, Stats, TrafficHistoryDTO, VertexDTO, ViewportDTO } from './types';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
@@ -30,6 +30,7 @@ export const api = {
   minimap: () => getJson<MinimapDTO>('/api/minimap'),
   viewport: (params: Record<string, string | number | boolean>) => getJson<ViewportDTO>('/api/viewport', params),
   nearest: (x: number, y: number) => getJson<VertexDTO>('/api/nearest', { x, y }),
+  nearby: (x: number, y: number, k = 100) => getJson<NearbyDTO>('/api/nearby', { x, y, k }),
   path: (start: number, end: number, algo: string, trace = true) =>
     getJson<PathDTO>('/api/path', { start, end, algo, trace, max_trace: 2500 }),
   trafficPath: (start: number, end: number, algo: string, trace = true) =>
@@ -44,6 +45,8 @@ export const api = {
   simState: () => getJson<SimulationState>('/api/sim/state'),
   injectTraffic: (x: number, y: number, radius = 150, intensity = 120) =>
     postJson<{ affected: number; x: number; y: number; radius: number }>('/api/traffic/inject', { x, y, radius, intensity }),
+  trafficHistory: (x: number, y: number, t: number, r = 300) =>
+    getJson<TrafficHistoryDTO>('/api/traffic/history', { x, y, t, r }),
   analytics: () => getJson<AnalyticsDTO>('/api/analytics/traffic'),
   demo: (n = 30000, seed = 2026) => postJson<DemoDTO>('/api/demo/setup', { n, seed }),
   poiCategories: () => getJson<{ categories: Array<{ id: string; label: string }> }>('/api/poi/categories'),
