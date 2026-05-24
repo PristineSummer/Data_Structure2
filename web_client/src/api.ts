@@ -24,7 +24,7 @@ export async function getJson<T>(url: string, params?: Record<string, string | n
 }
 
 export const api = {
-  generateMap: (n = 30000, seed = 2026) => postJson<{ status: string }>('/api/map/generate', { n, seed }),
+  generateMap: (n = 10000, seed = 2026) => postJson<{ status: string }>('/api/map/generate', { n, seed }),
   generationStatus: () => getJson<{ status: string; data: Stats | string | null }>('/api/map/generate/status'),
   stats: () => getJson<Stats>('/api/map/stats'),
   minimap: () => getJson<MinimapDTO>('/api/minimap', { max_edges: 4200, max_vertices: 3000 }),
@@ -45,8 +45,8 @@ export const api = {
   injectTraffic: (x: number, y: number, radius = 150, intensity = 120) =>
     postJson<{ affected: number; x: number; y: number; radius: number }>('/api/traffic/inject', { x, y, radius, intensity }),
   analytics: () => getJson<AnalyticsDTO>('/api/analytics/traffic'),
-  demo: (n = 30000, seed = 2026) => postJson<DemoDTO>('/api/demo/setup', { n, seed }),
-  demoAsync: (n = 30000, seed = 2026) => postJson<DemoStatusDTO>('/api/demo/setup?async=true', { n, seed, async: true }),
+  demo: (n = 10000, seed = 2026) => postJson<DemoDTO>('/api/demo/setup', { n, seed }),
+  demoAsync: (n = 10000, seed = 2026) => postJson<DemoStatusDTO>('/api/demo/setup?async=true', { n, seed, async: true }),
   demoStatus: (runId: string) => getJson<DemoStatusDTO>('/api/demo/status', { run_id: runId }),
   routeSubgraph: (pathIds: number[], maxNodes = 220, maxEdges = 520) =>
     getJson<RouteSubgraphDTO>('/api/route/subgraph', {

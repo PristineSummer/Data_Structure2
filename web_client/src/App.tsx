@@ -54,7 +54,8 @@ const MAP_SIZE_MIN = 100;
 const MAP_SIZE_MAX = 30000;
 const MAP_SIZE_PRESETS = [5000, 10000, 20000, 30000];
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-const normalizeMapSize = (n: number) => Math.round(clamp(Number.isFinite(n) ? n : 30000, MAP_SIZE_MIN, MAP_SIZE_MAX));
+const DEFAULT_MAP_SIZE = 10000;
+const normalizeMapSize = (n: number) => Math.round(clamp(Number.isFinite(n) ? n : DEFAULT_MAP_SIZE, MAP_SIZE_MIN, MAP_SIZE_MAX));
 const isDemoDone = (status: DemoStatusDTO | null): status is DemoStatusDTO & { result: DemoDTO } =>
   Boolean(status?.status === 'done' && status.result);
 
@@ -141,7 +142,7 @@ export default function App() {
   const drawRafRef = useRef<number | null>(null);
 
   const [status, setStatus] = useState({ text: '就绪 - 点击生成地图或启动演示', kind: 'idle' });
-  const [mapSize, setMapSize] = useState(30000);
+  const [mapSize, setMapSize] = useState(DEFAULT_MAP_SIZE);
   const [stats, setStats] = useState<Stats | null>(null);
   const [viewport, setViewport] = useState<ViewportDTO>({ vertices: [], edges: [] });
   const [minimapData, setMinimapData] = useState<MinimapDTO | null>(null);
@@ -175,7 +176,7 @@ export default function App() {
   const [showCongestedPanel, setShowCongestedPanel] = useState(false);
   const [demoRunning, setDemoRunning] = useState(false);
   const [demoStepIndex, setDemoStepIndex] = useState<number | null>(null);
-  const [demoSteps, setDemoSteps] = useState<DemoStep[]>(() => makeDemoSteps(30000));
+  const [demoSteps, setDemoSteps] = useState<DemoStep[]>(() => makeDemoSteps(DEFAULT_MAP_SIZE));
   const [demoStatus, setDemoStatus] = useState<DemoStatusDTO | null>(null);
   const [activePanel, setActivePanel] = useState<'demo' | 'route' | 'traffic' | 'poi'>('demo');
 
@@ -247,8 +248,11 @@ export default function App() {
       const canvas = ref.current;
       if (!canvas) return;
       const ratio = window.devicePixelRatio || 1;
-      canvas.width = Math.max(1, Math.floor(rect.width * ratio));
-      canvas.height = Math.max(1, Math.floor(rect.height * ratio));
+      const width = Math.max(1, Math.floor(rect.width * ratio));
+      const height = Math.max(1, Math.floor(rect.height * ratio));
+      if (canvas.width === width && canvas.height === height) return;
+      canvas.width = width;
+      canvas.height = height;
       canvas.style.width = `${rect.width}px`;
       canvas.style.height = `${rect.height}px`;
       const ctx = canvas.getContext('2d');
@@ -302,8 +306,9 @@ export default function App() {
     ctx.clearRect(0, 0, rect.width, rect.height);
     ctx.lineCap = 'round';
     const detail = zoomDetail(map.getZoom());
+    const compactMode = (stats?.vertices || 0) >= 18000;
     viewport.edges.forEach((edge) => {
-      if (detail < 0.18 && edge.level < 2 && edge.capacity < 110) return;
+      if (compactMode && detail < 0.18 && edge.level < 2 && edge.capacity < 110) return;
       const a = mapPoint(edge.x1, edge.y1);
       const b = mapPoint(edge.x2, edge.y2);
       if (!a || !b) return;
@@ -313,7 +318,7 @@ export default function App() {
         ? trafficColors[edge.level]
         : roadColors[edge.road_class || 'local'] || (edge.capacity > 120 ? '#7f8ea3' : '#b8c4d3');
       ctx.globalAlpha = layers.traffic
-        ? (edge.is_arterial ? 0.34 : 0.20) + detail * 0.42
+        ? (compactMode ? (edge.is_arterial ? 0.34 : 0.20) : (edge.is_arterial ? 0.48 : 0.34)) + detail * 0.42
         : (edge.is_arterial ? 0.62 : 0.40);
       ctx.lineWidth = width;
       ctx.beginPath();
@@ -322,7 +327,7 @@ export default function App() {
       ctx.stroke();
     });
     ctx.globalAlpha = 1;
-  }, [layers.traffic, mapPoint, viewport.edges]);
+  }, [layers.traffic, mapPoint, stats?.vertices, viewport.edges]);
 
   const drawHeat = useCallback(() => {
     const canvas = heatCanvasRef.current;
@@ -896,10 +901,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!staticPath && !trafficPath && !tracePlaying) return;
+    if (!tracePlaying) return;
     const id = window.setInterval(() => drawAllRef.current(), 90);
     return () => window.clearInterval(id);
-  }, [staticPath, trafficPath, tracePlaying]);
+  }, [tracePlaying]);
 
   useEffect(() => {
     if (!tracePlaying || !activeTrace) return;
@@ -1201,6 +1206,10 @@ export default function App() {
         }
       }
       await sleep(700);
+      setTracePlaying(false);
+      setActiveTrace(null);
+      setTraceIndex(0);
+      await refreshViewportRef.current?.();
 
       setDemoTimeline(null, demoSteps.length - 1, n);
       setDemoStatus(null);

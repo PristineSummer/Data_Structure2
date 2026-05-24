@@ -27,5 +27,3 @@ artifacts/
 *.pkl
 *.sqlite
 *.db
-
-/References/

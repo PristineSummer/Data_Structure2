@@ -36,7 +36,7 @@ _analytics_cache = {"payload": None, "updated_at": 0.0, "time_step": -1, "map_ke
 _demo_lock = threading.Lock()
 _demo_runs = {}
 DEMO_STEPS = [
-    "加载 30000 点城市路网",
+    "加载演示城市路网",
     "启动早高峰交通流",
     "选择跨城路线",
     "注入事故拥堵",
@@ -59,7 +59,7 @@ def index():
 def generate_map():
     global _gen_result
     data = request.get_json() or {}
-    n_actual = max(100, min(30000, int(data.get("n", 30000))))
+    n_actual = max(100, min(30000, int(data.get("n", 10000))))
     seed = int(data.get("seed", 2026))
     with _gen_lock:
         _gen_result = {"status": "running", "data": None}
@@ -570,7 +570,7 @@ def analytics_traffic():
 @app.route("/api/demo/setup", methods=["POST"])
 def demo_setup():
     data = request.get_json() or {}
-    n = max(100, min(30000, int(data.get("n", 30000))))
+    n = max(100, min(30000, int(data.get("n", 10000))))
     seed = int(data.get("seed", 2026))
     async_requested = request.args.get("async", "false").lower() == "true" or bool(data.get("async"))
     if async_requested:
