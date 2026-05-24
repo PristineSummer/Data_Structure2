@@ -385,13 +385,17 @@ export default function App() {
 
   const drawCars = useCallback(() => {
     const canvas = carCanvasRef.current;
+    const map = mapRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
     if (!layers.cars) return;
-    const stride = Math.max(1, Math.ceil(cars.length / 800));
+    const detail = zoomDetail(map?.getZoom() ?? 0);
+    if (detail < 0.28) return;
+    const maxVisibleCars = detail > 0.76 ? 420 : 240;
+    const stride = Math.max(1, Math.ceil(cars.length / maxVisibleCars));
     cars.forEach((car, idx) => {
       if (idx % stride !== 0) return;
       const p = mapPoint(car.x, car.y);
