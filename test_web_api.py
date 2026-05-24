@@ -208,8 +208,49 @@ def test_minimap_api(client) -> None:
     assert minimap["vertices"], minimap
     assert minimap["edges"], minimap
     assert {"id", "x", "y"}.issubset(minimap["vertices"][0].keys())
-    assert {"x1", "y1", "x2", "y2"}.issubset(minimap["edges"][0].keys())
+    required_edge_fields = {"x1", "y1", "x2", "y2", "road_class", "is_arterial", "score", "level", "capacity"}
+    assert required_edge_fields.issubset(minimap["edges"][0].keys())
+    assert len(minimap["edges"]) >= min(50, len(minimap["vertices"]))
     print("  OK test_minimap_api")
+
+
+def test_route_subgraph_api(client) -> None:
+    start, end = corner_vertices(client)
+    path = assert_status(client.get(
+        f"/api/path?start={start}&end={end}&algo=astar&trace=true&max_trace=40"
+    ))
+    subgraph = assert_status(client.get(
+        "/api/route/subgraph?"
+        f"path={','.join(str(vid) for vid in path['path_vertex_ids'])}"
+        "&max_nodes=90&max_edges=140"
+    ))
+    assert {"nodes", "edges", "path_vertex_ids", "visited_ids", "relaxed_edges", "truncated"}.issubset(subgraph.keys())
+    assert subgraph["nodes"], subgraph
+    assert subgraph["edges"], subgraph
+    assert len(subgraph["nodes"]) <= 90
+    assert len(subgraph["edges"]) <= 140
+    assert {"id", "x", "y"}.issubset(subgraph["nodes"][0].keys())
+    assert {"u", "v", "road_class", "score", "is_path"}.issubset(subgraph["edges"][0].keys())
+    print("  OK test_route_subgraph_api")
+
+
+def test_demo_setup_async(client) -> None:
+    started = assert_status(client.post("/api/demo/setup?async=true", json={"n": 240, "seed": 4040}))
+    assert {"run_id", "status", "step_index", "steps", "progress", "message"}.issubset(started.keys())
+    run_id = started["run_id"]
+    deadline = time.time() + 30
+    latest = started
+    while time.time() < deadline:
+        latest = assert_status(client.get(f"/api/demo/status?run_id={run_id}"))
+        if latest["status"] in {"done", "error"}:
+            break
+        time.sleep(0.1)
+    assert latest["status"] == "done", latest
+    assert latest["result"]["static_path"]["found"] is True
+    assert latest["result"]["traffic_path"]["found"] is True
+    assert latest["progress"] == 1.0
+    client.post("/api/sim/stop")
+    print("  OK test_demo_setup_async")
 
 
 def test_demo_setup(client) -> None:
@@ -239,6 +280,8 @@ def run_all_tests() -> None:
         test_manual_inject_then_explain(client)
         test_poi_api(client)
         test_minimap_api(client)
+        test_route_subgraph_api(client)
+        test_demo_setup_async(client)
         test_demo_setup(client)
         client.post("/api/sim/stop")
     print("All web API tests passed.")

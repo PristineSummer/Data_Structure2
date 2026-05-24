@@ -4,7 +4,7 @@ web_server.py — Navigation System Web Server
 
 启动方式: python web_server.py
 """
-import heapq, math, os, sys, threading, time, webbrowser
+import heapq, math, os, sys, threading, time, uuid, webbrowser
 from pathlib import Path
 
 try:
@@ -31,6 +31,19 @@ _sim_speed   = 1      # steps executed per 0.05 s tick
 MAP_CACHE_DIR = Path("data/generated")
 MAP_CACHE_VERSION = "web_v1"
 _last_cache_info = {"hit": False, "key": "", "path": ""}
+_analytics_lock = threading.Lock()
+_analytics_cache = {"payload": None, "updated_at": 0.0, "time_step": -1, "map_key": ""}
+_demo_lock = threading.Lock()
+_demo_runs = {}
+DEMO_STEPS = [
+    "加载 30000 点城市路网",
+    "启动早高峰交通流",
+    "选择跨城路线",
+    "注入事故拥堵",
+    "生成静态路径轨迹",
+    "生成交通感知绕行",
+    "汇总展示指标",
+]
 
 
 # ─── Static files ──────────────────────────────────────────────────────────
@@ -80,6 +93,7 @@ def load_map():
     try:
         engine.load_map(filepath)
         _set_cache_info(False, "", "")
+        _invalidate_analytics_cache()
         return jsonify({"status": "ok", "stats": _get_stats()})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -107,28 +121,29 @@ def map_stats():
 
 @app.route("/api/minimap")
 def minimap_data():
-    """Return a heavily downsampled full-graph overview for the minimap canvas."""
+    """Return a representative full-graph overview for the minimap canvas."""
     if not engine.is_loaded:
         return jsonify({"vertices": [], "edges": []})
     try:
-        s = engine.get_stats()
-        w = s.get("width",  2000)
-        h = s.get("height", 1500)
+        graph = engine.graph
+        w = getattr(graph, "width", 2000)
+        h = getattr(graph, "height", 1500)
+        max_vertices = max(400, min(6000, int(request.args.get("max_vertices", 2600))))
+        max_edges = max(600, min(12000, int(request.args.get("max_edges", 3600))))
+        grid_cols = max(12, min(120, int(request.args.get("grid_cols", 70))))
+        grid_rows = max(10, min(90, int(request.args.get("grid_rows", 52))))
         vp = engine.query_viewport_state(
             0, 0, w, h,
             use_representative=True,
-            grid_cols=50, grid_rows=38,
+            grid_cols=64, grid_rows=48,
             include_traffic=False,
         )
         vertices = [{"id": v.id, "x": v.x, "y": v.y} for v in vp.vertices]
-        vid_map  = {v.id: v for v in vp.vertices}
-        edges    = []
-        for e in vp.edges:
-            u_v = vid_map.get(e.u)
-            v_v = vid_map.get(e.v)
-            if u_v and v_v:
-                edges.append({"x1": u_v.x, "y1": u_v.y,
-                               "x2": v_v.x, "y2": v_v.y})
+        if len(vertices) > max_vertices:
+            stride = max(1, math.ceil(len(vertices) / max_vertices))
+            vertices = vertices[::stride][:max_vertices]
+
+        edges = _sample_minimap_edges(max_edges=max_edges, grid_cols=grid_cols, grid_rows=grid_rows)
         return jsonify({"vertices": vertices, "edges": edges})
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
@@ -216,6 +231,7 @@ def viewport():
                     lv = e.congestion_level()
             else:
                 lv = e.congestion_level()
+            road_class, is_arterial, road_score = _edge_visual_rank(e, level=lv, ratio=ratio)
             edges.append({
                 "u": e.u, "v": e.v,
                 "x1": u_v.x, "y1": u_v.y,
@@ -226,6 +242,9 @@ def viewport():
                 "current_cars": round(cars, 3),
                 "ratio": round(ratio, 4) if math.isfinite(ratio) else ratio,
                 "travel_time": round(travel_time, 3) if math.isfinite(travel_time) else travel_time,
+                "road_class": road_class,
+                "is_arterial": is_arterial,
+                "score": round(road_score, 3),
             })
         edges = _limit_viewport_edges(edges, max_edges, use_rep=use_rep)
 
@@ -424,6 +443,7 @@ def sim_start():
 def sim_stop():
     # Non-blocking: just signal the thread to stop, it will exit on its own
     _sim_stop_event.set()
+    _invalidate_analytics_cache()
     return jsonify({"status": "stopped"})
 
 
@@ -466,6 +486,7 @@ def inject_traffic():
         affected = engine.inject_traffic_event(
             x, y, radius=radius, intensity=intensity,
         )
+        _invalidate_analytics_cache()
         return jsonify({"affected": affected, "x": x, "y": y, "radius": radius})
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
@@ -541,7 +562,7 @@ def analytics_traffic():
     if not engine.is_loaded:
         return jsonify({"error": "no_map"}), 404
     try:
-        return jsonify(_traffic_analytics_payload())
+        return jsonify(_get_cached_analytics_payload())
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
 
@@ -551,60 +572,63 @@ def demo_setup():
     data = request.get_json() or {}
     n = max(100, min(30000, int(data.get("n", 30000))))
     seed = int(data.get("seed", 2026))
+    async_requested = request.args.get("async", "false").lower() == "true" or bool(data.get("async"))
+    if async_requested:
+        run_id = uuid.uuid4().hex[:12]
+        _set_demo_run(run_id, status="running", step_index=0, progress=0.0, message=DEMO_STEPS[0])
+
+        def _worker():
+            try:
+                result = _build_demo_payload(n, seed, run_id=run_id)
+                _set_demo_run(
+                    run_id, status="done", step_index=len(DEMO_STEPS) - 1,
+                    progress=1.0, message="演示剧本准备完成", result=result,
+                )
+            except Exception as exc:
+                _set_demo_run(
+                    run_id, status="error", step_index=-1,
+                    progress=1.0, message="演示剧本准备失败", error=str(exc),
+                )
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return jsonify(_get_demo_run(run_id))
+
     try:
-        current = engine.get_stats() if engine.is_loaded else {}
-        if (
-            not engine.is_loaded
-            or int(current.get("vertices", 0)) != n
-            or int(current.get("seed") or -1) != seed
-        ):
-            _load_or_generate_map(n, seed=seed, width=2000, height=1500, poi_density=0.08)
-        _start_background_simulation(cars=1800, seed=seed, density=(0.18, 0.58), c=1.0, threshold=0.8)
+        return jsonify(_build_demo_payload(n, seed))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
 
-        start_v, end_v, static_res = _choose_demo_route()
-        incident = _incident_from_path(static_res)
-        affected = engine.inject_traffic_event(
-            incident["x"], incident["y"],
-            radius=incident["radius"],
-            intensity=incident["intensity"],
-        )
-        for _ in range(5):
-            engine.step_simulation(steps=1, spawn_count=5)
 
-        traffic_res = engine.traffic_aware_path(
-            start_v.id, end_v.id, algorithm="astar", trace=True, max_trace=2500
-        )
-        static_trace_res = engine.shortest_path(
-            start_v.id, end_v.id, algorithm="astar", trace=True, max_trace=2500
-        )
+@app.route("/api/demo/status")
+def demo_status():
+    run_id = request.args.get("run_id", "").strip()
+    if not run_id:
+        return jsonify({"error": "run_id required"}), 400
+    status = _get_demo_run(run_id)
+    if status is None:
+        return jsonify({"error": "run_not_found"}), 404
+    return jsonify(status)
 
-        static_payload = _path_payload(static_trace_res, include_trace=True)
-        traffic_payload = _path_payload(traffic_res, include_trace=True)
-        route_explain = _route_explain_payload(
-            start_v.id, end_v.id, "astar",
-            trace=False, max_trace=0,
-            static_res=static_trace_res,
-            traffic_res=traffic_res,
-        )
-        incident["affected_edges"] = affected
 
-        return jsonify({
-            "stats": _get_stats(),
-            "start": _vertex_payload(start_v),
-            "end": _vertex_payload(end_v),
-            "incident": incident,
-            "static_path": static_payload,
-            "traffic_path": traffic_payload,
-            "metrics": {
-                "static_distance": static_trace_res.distance,
-                "traffic_time": traffic_res.distance,
-                "static_hops": max(0, len(static_trace_res.path) - 1),
-                "traffic_hops": max(0, len(traffic_res.path) - 1),
-                "avoided_congested_edges": _count_congested_edges(static_trace_res) - _count_congested_edges(traffic_res),
-                "affected_edges": affected,
-            },
-            "route_explain": route_explain,
-        })
+@app.route("/api/route/subgraph")
+def route_subgraph():
+    if not engine.is_loaded:
+        return jsonify({"error": "no_map"}), 404
+    raw_ids = request.args.get("path", "")
+    start_id = request.args.get("start")
+    end_id = request.args.get("end")
+    algo = request.args.get("algo", "astar")
+    max_nodes = max(20, min(600, int(request.args.get("max_nodes", 220))))
+    max_edges = max(20, min(1200, int(request.args.get("max_edges", 520))))
+    try:
+        if raw_ids:
+            path_ids = [int(part) for part in raw_ids.split(",") if part.strip()]
+        elif start_id is not None and end_id is not None:
+            result = engine.shortest_path(int(start_id), int(end_id), algorithm=algo, trace=True, max_trace=2500)
+            path_ids = result.path
+        else:
+            return jsonify({"error": "path or start/end required"}), 400
+        return jsonify(_route_subgraph_payload(path_ids, max_nodes=max_nodes, max_edges=max_edges))
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
 
@@ -613,6 +637,161 @@ def demo_setup():
 
 def _set_cache_info(hit: bool, key: str, path: str) -> None:
     _last_cache_info.update({"hit": bool(hit), "key": key, "path": path})
+
+
+def _invalidate_analytics_cache() -> None:
+    with _analytics_lock:
+        _analytics_cache.update({"payload": None, "updated_at": 0.0, "time_step": -1, "map_key": ""})
+
+
+def _analytics_map_key() -> str:
+    if not engine.is_loaded:
+        return "no_map"
+    graph = engine.graph
+    return f"{graph.vertex_count if graph else 0}:{getattr(graph, 'seed', None)}:{_last_cache_info.get('key', '')}"
+
+
+def _store_analytics_payload(payload) -> None:
+    with _analytics_lock:
+        _analytics_cache.update({
+            "payload": payload,
+            "updated_at": time.time(),
+            "time_step": int(payload.get("time_step", 0)),
+            "map_key": _analytics_map_key(),
+        })
+
+
+def _get_cached_analytics_payload():
+    now = time.time()
+    simulator = engine.traffic_simulator
+    current_step = int(getattr(simulator, "time_step", 0) or 0)
+    map_key = _analytics_map_key()
+    with _analytics_lock:
+        payload = _analytics_cache.get("payload")
+        if (
+            payload is not None
+            and _analytics_cache.get("map_key") == map_key
+            and (now - float(_analytics_cache.get("updated_at", 0.0))) < 1.25
+            and (simulator is None or int(_analytics_cache.get("time_step", -1)) >= current_step - 30)
+        ):
+            cached = dict(payload)
+            cached["cache_hit"] = True
+            cached["cache_age_ms"] = round((now - float(_analytics_cache.get("updated_at", now))) * 1000, 1)
+            return cached
+
+    payload = _traffic_analytics_payload()
+    payload["cache_hit"] = False
+    payload["cache_age_ms"] = 0
+    _store_analytics_payload(payload)
+    return payload
+
+
+def _set_demo_run(run_id: str, **updates) -> None:
+    with _demo_lock:
+        state = _demo_runs.get(run_id, {
+            "run_id": run_id,
+            "status": "queued",
+            "step_index": 0,
+            "steps": DEMO_STEPS,
+            "progress": 0.0,
+            "message": "",
+            "result": None,
+            "error": "",
+        })
+        state.update(updates)
+        state["run_id"] = run_id
+        state["steps"] = DEMO_STEPS
+        _demo_runs[run_id] = state
+
+
+def _get_demo_run(run_id: str):
+    with _demo_lock:
+        state = _demo_runs.get(run_id)
+        if state is None:
+            return None
+        return dict(state)
+
+
+def _demo_progress(run_id: str, step_index: int, message: str = "") -> None:
+    if not run_id:
+        return
+    progress = (step_index + 0.15) / max(1, len(DEMO_STEPS))
+    _set_demo_run(
+        run_id,
+        status="running",
+        step_index=max(0, min(step_index, len(DEMO_STEPS) - 1)),
+        progress=round(min(progress, 0.96), 3),
+        message=message or DEMO_STEPS[min(step_index, len(DEMO_STEPS) - 1)],
+    )
+
+
+def _build_demo_payload(n: int, seed: int, *, run_id: str = ""):
+    _demo_progress(run_id, 0)
+    current = engine.get_stats() if engine.is_loaded else {}
+    if (
+        not engine.is_loaded
+        or int(current.get("vertices", 0)) != n
+        or int(current.get("seed") or -1) != seed
+    ):
+        _load_or_generate_map(n, seed=seed, width=2000, height=1500, poi_density=0.08)
+
+    _demo_progress(run_id, 1)
+    _start_background_simulation(cars=1800, seed=seed, density=(0.18, 0.58), c=1.0, threshold=0.8)
+
+    _demo_progress(run_id, 2)
+    start_v, end_v, static_res = _choose_demo_route()
+    incident = _incident_from_path(static_res)
+
+    _demo_progress(run_id, 3)
+    affected = engine.inject_traffic_event(
+        incident["x"], incident["y"],
+        radius=incident["radius"],
+        intensity=incident["intensity"],
+    )
+    for _ in range(4):
+        engine.step_simulation(steps=1, spawn_count=5)
+
+    _demo_progress(run_id, 4)
+    static_trace_res = engine.shortest_path(
+        start_v.id, end_v.id, algorithm="astar", trace=True, max_trace=2500
+    )
+
+    _demo_progress(run_id, 5)
+    traffic_res = engine.traffic_aware_path(
+        start_v.id, end_v.id, algorithm="astar", trace=True, max_trace=2500
+    )
+    route_explain = _route_explain_payload(
+        start_v.id, end_v.id, "astar",
+        trace=False, max_trace=0,
+        static_res=static_trace_res,
+        traffic_res=traffic_res,
+    )
+
+    _demo_progress(run_id, 6)
+    static_payload = _path_payload(static_trace_res, include_trace=True)
+    traffic_payload = _path_payload(traffic_res, include_trace=True)
+    incident["affected_edges"] = affected
+    analytics = _get_cached_analytics_payload()
+
+    return {
+        "stats": _get_stats(),
+        "start": _vertex_payload(start_v),
+        "end": _vertex_payload(end_v),
+        "incident": incident,
+        "static_path": static_payload,
+        "traffic_path": traffic_payload,
+        "metrics": {
+            "static_distance": static_trace_res.distance,
+            "traffic_time": traffic_res.distance,
+            "static_hops": max(0, len(static_trace_res.path) - 1),
+            "traffic_hops": max(0, len(traffic_res.path) - 1),
+            "avoided_congested_edges": _count_congested_edges(static_trace_res) - _count_congested_edges(traffic_res),
+            "affected_edges": affected,
+            "active_cars": analytics.get("active_cars", 0),
+            "average_ratio": analytics.get("average_ratio", 0),
+        },
+        "route_explain": route_explain,
+    }
 
 
 def _map_cache_key(
@@ -652,6 +831,7 @@ def _load_or_generate_map(
         try:
             engine.load_map(str(cache_path))
             _set_cache_info(True, key, str(cache_path))
+            _invalidate_analytics_cache()
             return _get_stats()
         except Exception:
             # Corrupt or stale cache: regenerate in place without failing the demo.
@@ -670,6 +850,7 @@ def _load_or_generate_map(
     except Exception:
         pass
     _set_cache_info(False, key, str(cache_path))
+    _invalidate_analytics_cache()
     return _get_stats()
 
 
@@ -696,6 +877,105 @@ def _limit_viewport_edges(edges, max_edges: int, *, use_rep: bool = False):
     return limited
 
 
+def _edge_visual_rank(edge, *, level: int = None, ratio: float = None):
+    level = edge.congestion_level() if level is None else int(level)
+    if ratio is None:
+        ratio = congestion_ratio(float(edge.current_cars), edge.capacity)
+    safe_ratio = float(ratio) if math.isfinite(float(ratio)) else 3.0
+    score = float(edge.capacity) * 1.0 + float(edge.length) * 0.28 + level * 120.0 + safe_ratio * 55.0
+    if edge.capacity >= 160 or score >= 250:
+        return "arterial", True, score
+    if edge.capacity >= 95 or score >= 150:
+        return "collector", False, score
+    return "local", False, score
+
+
+def _edge_payload_from_state(edge, u_v, v_v, *, current_cars=None, ratio=None, level=None, travel_time=None):
+    cars = float(edge.current_cars if current_cars is None else current_cars)
+    ratio = congestion_ratio(cars, edge.capacity) if ratio is None else ratio
+    level = edge.congestion_level() if level is None else int(level)
+    travel_time = edge.travel_time() if travel_time is None else travel_time
+    road_class, is_arterial, score = _edge_visual_rank(edge, level=level, ratio=ratio)
+    return {
+        "u": edge.u,
+        "v": edge.v,
+        "x1": u_v.x,
+        "y1": u_v.y,
+        "x2": v_v.x,
+        "y2": v_v.y,
+        "length": round(edge.length, 3),
+        "capacity": edge.capacity,
+        "current_cars": round(cars, 3),
+        "ratio": round(ratio, 4) if math.isfinite(ratio) else ratio,
+        "level": level,
+        "travel_time": round(travel_time, 3) if math.isfinite(travel_time) else travel_time,
+        "road_class": road_class,
+        "is_arterial": is_arterial,
+        "score": round(score, 3),
+    }
+
+
+def _sample_minimap_edges(*, max_edges: int, grid_cols: int, grid_rows: int):
+    graph = engine.graph
+    map_w = max(1.0, float(getattr(graph, "width", 2000)))
+    map_h = max(1.0, float(getattr(graph, "height", 1500)))
+    cell_w = map_w / max(1, grid_cols)
+    cell_h = map_h / max(1, grid_rows)
+    grid_best = {}
+    top_heap = []
+    arterial = []
+    counter = 0
+
+    for edge in engine.graph.edges():
+        u_v = engine.graph.get_vertex(edge.u)
+        v_v = engine.graph.get_vertex(edge.v)
+        if u_v is None or v_v is None:
+            continue
+        cars = float(edge.current_cars)
+        ratio = congestion_ratio(cars, edge.capacity)
+        level = edge.congestion_level()
+        _, is_arterial, score = _edge_visual_rank(edge, level=level, ratio=ratio)
+        sample = (score, edge, u_v, v_v, cars, ratio, level)
+
+        mid_x = (u_v.x + v_v.x) / 2.0
+        mid_y = (u_v.y + v_v.y) / 2.0
+        cell = (
+            min(grid_cols - 1, max(0, int(mid_x / cell_w))),
+            min(grid_rows - 1, max(0, int(mid_y / cell_h))),
+        )
+        current = grid_best.get(cell)
+        if current is None or score > current[0]:
+            grid_best[cell] = sample
+
+        top_item = (score, counter, sample)
+        counter += 1
+        top_keep = max(120, max_edges // 3)
+        if len(top_heap) < top_keep:
+            heapq.heappush(top_heap, top_item)
+        elif top_item > top_heap[0]:
+            heapq.heapreplace(top_heap, top_item)
+
+        if is_arterial and len(arterial) < max_edges:
+            arterial.append(sample)
+
+    merged = {}
+    def add_sample(sample):
+        _, edge, u_v, v_v, cars, ratio, level = sample
+        key = (edge.u, edge.v)
+        if key not in merged:
+            merged[key] = _edge_payload_from_state(edge, u_v, v_v, current_cars=cars, ratio=ratio, level=level)
+
+    for sample in arterial:
+        add_sample(sample)
+    for sample in grid_best.values():
+        add_sample(sample)
+    for _, _, sample in sorted(top_heap, reverse=True):
+        add_sample(sample)
+    edges = list(merged.values())
+    edges.sort(key=lambda row: (row.get("is_arterial", False), row.get("score", 0)), reverse=True)
+    return edges[:max_edges]
+
+
 def _start_background_simulation(
     *,
     cars: int = 1500,
@@ -717,6 +997,7 @@ def _start_background_simulation(
         initial_density=density,
         seed=seed,
     )
+    _invalidate_analytics_cache()
     _sim_stop_event.clear()
 
     def _loop():
@@ -739,6 +1020,10 @@ def _start_background_simulation(
                 if tick % 20 == 0 and not _sim_stop_event.is_set():
                     snap = sim.get_traffic_snapshot()
                     engine._traffic_history.add_snapshot(snap)
+                    payload = _traffic_analytics_payload(snapshot=snap)
+                    payload["cache_hit"] = False
+                    payload["cache_age_ms"] = 0
+                    _store_analytics_payload(payload)
                 sim._sync_graph_edges()
             except Exception:
                 pass
@@ -824,20 +1109,13 @@ def _edge_payload(u: int, v: int):
     ratio = congestion_ratio(cars, edge.capacity)
     level = edge.congestion_level()
     travel_time = edge.travel_time()
-    return {
-        "u": edge.u,
-        "v": edge.v,
-        "x1": u_v.x,
-        "y1": u_v.y,
-        "x2": v_v.x,
-        "y2": v_v.y,
-        "length": round(edge.length, 3),
-        "capacity": edge.capacity,
-        "current_cars": round(cars, 3),
-        "ratio": round(ratio, 4) if math.isfinite(ratio) else ratio,
-        "level": level,
-        "travel_time": round(travel_time, 3) if math.isfinite(travel_time) else travel_time,
-    }
+    return _edge_payload_from_state(
+        edge, u_v, v_v,
+        current_cars=cars,
+        ratio=ratio,
+        level=level,
+        travel_time=travel_time,
+    )
 
 
 def _path_edge_details(path_ids):
@@ -847,6 +1125,87 @@ def _path_edge_details(path_ids):
         if payload is not None:
             details.append(payload)
     return details
+
+
+def _route_subgraph_payload(path_ids, *, max_nodes: int, max_edges: int):
+    if not path_ids:
+        return {
+            "nodes": [],
+            "edges": [],
+            "path_vertex_ids": [],
+            "visited_ids": [],
+            "relaxed_edges": [],
+            "truncated": False,
+        }
+
+    selected = []
+    selected_set = set()
+    queue = []
+    for vid in path_ids:
+        if vid not in selected_set and engine.graph.get_vertex(vid) is not None:
+            selected.append(vid)
+            selected_set.add(vid)
+            queue.append(vid)
+        if len(selected) >= max_nodes:
+            break
+
+    idx = 0
+    while idx < len(queue) and len(selected) < max_nodes:
+        vid = queue[idx]
+        idx += 1
+        neighbors = sorted(
+            engine.graph.get_neighbors(vid),
+            key=lambda e: (_edge_visual_rank(e)[2], -e.length),
+            reverse=True,
+        )
+        for edge in neighbors[:8]:
+            other = edge.other(vid)
+            if other not in selected_set:
+                selected.append(other)
+                selected_set.add(other)
+                queue.append(other)
+                if len(selected) >= max_nodes:
+                    break
+
+    nodes = []
+    for vid in selected:
+        vertex = engine.graph.get_vertex(vid)
+        if vertex is None:
+            continue
+        nodes.append({
+            "id": vid,
+            "x": vertex.x,
+            "y": vertex.y,
+            "is_path": vid in set(path_ids),
+        })
+
+    path_edges = {_edge_key(path_ids[i], path_ids[i + 1]) for i in range(len(path_ids) - 1)}
+    edge_rows = []
+    seen = set()
+    for vid in selected:
+        for edge in engine.graph.get_neighbors(vid):
+            key = _edge_key(edge.u, edge.v)
+            if key in seen or edge.u not in selected_set or edge.v not in selected_set:
+                continue
+            u_v = engine.graph.get_vertex(edge.u)
+            v_v = engine.graph.get_vertex(edge.v)
+            if u_v is None or v_v is None:
+                continue
+            row = _edge_payload_from_state(edge, u_v, v_v)
+            row["is_path"] = key in path_edges
+            edge_rows.append(row)
+            seen.add(key)
+
+    edge_rows.sort(key=lambda row: (row.get("is_path", False), row.get("score", 0)), reverse=True)
+    truncated = len(edge_rows) > max_edges or len(selected) >= max_nodes
+    return {
+        "nodes": nodes[:max_nodes],
+        "edges": edge_rows[:max_edges],
+        "path_vertex_ids": path_ids,
+        "visited_ids": path_ids[:max_nodes],
+        "relaxed_edges": [{"u": row["u"], "v": row["v"]} for row in edge_rows[:max_edges] if row.get("is_path")],
+        "truncated": truncated,
+    }
 
 
 def _worst_edge(details):
@@ -958,11 +1317,11 @@ def _route_explain_payload(
     }
 
 
-def _traffic_analytics_payload():
+def _traffic_analytics_payload(snapshot=None):
     level_counts = {"0": 0, "1": 0, "2": 0, "3": 0}
     top_heap = []
     counter = 0
-    if engine.traffic_simulator is None:
+    if snapshot is None and engine.traffic_simulator is None:
         active_cars = 0
         average_ratio = 0.0
         max_ratio = 0.0
@@ -972,7 +1331,8 @@ def _traffic_analytics_payload():
             ratio = congestion_ratio(float(edge.current_cars), edge.capacity)
             states.append((edge.u, edge.v, edge.capacity, float(edge.current_cars), ratio, edge.congestion_level(), edge.travel_time()))
     else:
-        snapshot = engine.get_traffic_snapshot()
+        if snapshot is None:
+            snapshot = engine.get_traffic_snapshot()
         active_cars = snapshot.active_cars
         average_ratio = snapshot.average_ratio
         max_ratio = snapshot.max_ratio
@@ -987,15 +1347,25 @@ def _traffic_analytics_payload():
         u_v = engine.graph.get_vertex(u)
         v_v = engine.graph.get_vertex(v)
         if u_v and v_v:
+            edge = engine.graph.get_edge(u, v)
+            road_class, is_arterial, score = ("local", False, 0.0)
+            length = 0.0
+            if edge:
+                length = edge.length
+                road_class, is_arterial, score = _edge_visual_rank(edge, level=level, ratio=ratio)
             row = {
                 "u": u, "v": v,
                 "x1": u_v.x, "y1": u_v.y,
                 "x2": v_v.x, "y2": v_v.y,
+                "length": round(length, 3),
                 "capacity": capacity,
                 "current_cars": round(current_cars, 2),
                 "ratio": round(ratio, 4) if math.isfinite(ratio) else ratio,
                 "level": level,
                 "travel_time": round(travel_time, 2) if math.isfinite(travel_time) else travel_time,
+                "road_class": road_class,
+                "is_arterial": is_arterial,
+                "score": round(score, 3),
             }
             score_ratio = float(ratio) if math.isfinite(ratio) else 10.0
             item = (score_ratio, float(current_cars), counter, row)

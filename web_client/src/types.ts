@@ -35,6 +35,9 @@ export interface EdgeDTO {
   ratio: number;
   level: TrafficLevel;
   travel_time: number;
+  road_class?: 'arterial' | 'collector' | 'local' | string;
+  is_arterial?: boolean;
+  score?: number;
 }
 
 export interface ViewportDTO {
@@ -50,7 +53,35 @@ export interface ViewportDTO {
 
 export interface MinimapDTO {
   vertices: Array<{ id: number; x: number; y: number }>;
-  edges: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+  edges: Array<Partial<EdgeDTO> & { x1: number; y1: number; x2: number; y2: number }>;
+  error?: string;
+}
+
+export interface DemoStatusDTO {
+  run_id: string;
+  status: 'queued' | 'running' | 'done' | 'error';
+  step_index: number;
+  steps: string[];
+  progress: number;
+  message: string;
+  result: DemoDTO | null;
+  error?: string;
+}
+
+export interface RouteSubgraphNode {
+  id: number;
+  x: number;
+  y: number;
+  is_path?: boolean;
+}
+
+export interface RouteSubgraphDTO {
+  nodes: RouteSubgraphNode[];
+  edges: Array<EdgeDTO & { is_path?: boolean }>;
+  path_vertex_ids: number[];
+  visited_ids: number[];
+  relaxed_edges: Array<{ u: number; v: number }>;
+  truncated: boolean;
   error?: string;
 }
 
@@ -111,6 +142,8 @@ export interface AnalyticsDTO {
   level_counts: Record<string, number>;
   top_congested_edges: EdgeDTO[];
   history: Array<{ time_step: number; average_ratio: number; max_ratio: number; active_cars: number }>;
+  cache_hit?: boolean;
+  cache_age_ms?: number;
   error?: string;
 }
 
