@@ -1258,7 +1258,7 @@ export default function App() {
         <section className="panel primary-panel">
           <div className="panel-title">一键演示</div>
           <button className="command primary" onClick={runDemo} disabled={demoRunning}>
-            {demoRunning && demoStepIndex !== null ? `演示中 ${demoStepIndex + 1}/5` : '运行高分演示剧本'}
+            {demoRunning && demoStepIndex !== null ? `演示中 ${demoStepIndex + 1}/5` : '运行一键演示剧本'}
           </button>
           <div className="timeline">
             {demoSteps.map((step) => <div key={step.label} className={`timeline-row ${step.state}`}><span />{step.label}</div>)}
