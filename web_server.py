@@ -823,17 +823,25 @@ def _edge_key(u: int, v: int):
     return (min(u, v), max(u, v))
 
 
-def _edge_payload(u: int, v: int):
+def _edge_payload(u: int, v: int, state=None):
     edge = engine.graph.get_edge(u, v) if engine.graph else None
     u_v = engine.graph.get_vertex(u) if engine.graph else None
     v_v = engine.graph.get_vertex(v) if engine.graph else None
     if edge is None or u_v is None or v_v is None:
         return None
 
-    cars = float(edge.current_cars)
-    ratio = congestion_ratio(cars, edge.capacity)
-    level = edge.congestion_level()
-    travel_time = edge.travel_time()
+    if state is not None:
+        cars = float(state.current_cars)
+        capacity = int(state.capacity)
+        ratio = float(state.ratio)
+        level = int(state.level)
+        travel_time = float(state.travel_time)
+    else:
+        cars = float(edge.current_cars)
+        capacity = int(edge.capacity)
+        ratio = congestion_ratio(cars, capacity)
+        level = edge.congestion_level()
+        travel_time = edge.travel_time()
     return {
         "u": edge.u,
         "v": edge.v,
@@ -842,7 +850,7 @@ def _edge_payload(u: int, v: int):
         "x2": v_v.x,
         "y2": v_v.y,
         "length": round(edge.length, 3),
-        "capacity": edge.capacity,
+        "capacity": capacity,
         "current_cars": round(cars, 3),
         "ratio": round(ratio, 4) if math.isfinite(ratio) else ratio,
         "level": level,
@@ -851,9 +859,15 @@ def _edge_payload(u: int, v: int):
 
 
 def _path_edge_details(path_ids):
+    keys = [_edge_key(path_ids[i], path_ids[i + 1]) for i in range(len(path_ids) - 1)]
+    traffic_states = {}
+    if engine.traffic_simulator is not None and keys:
+        traffic_states = engine.traffic_simulator.get_edge_traffic_states(keys)
+
     details = []
     for i in range(len(path_ids) - 1):
-        payload = _edge_payload(path_ids[i], path_ids[i + 1])
+        key = _edge_key(path_ids[i], path_ids[i + 1])
+        payload = _edge_payload(path_ids[i], path_ids[i + 1], traffic_states.get(key))
         if payload is not None:
             details.append(payload)
     return details
@@ -1124,7 +1138,7 @@ def spa_fallback(path):
 # ─── Launch ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port = 5678
+    port = 5680
     url  = f"http://localhost:{port}"
 
     def _open():

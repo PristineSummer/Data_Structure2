@@ -69,7 +69,7 @@ traffic_aware_result = engine.traffic_aware_path(start_id=0, end_id=9999, algori
 
 如果需要以图形化界面直接体验导航系统：
 - **运行桌面客户端**：在根目录下运行 `python main_gui.py`，启动基于 PySide6 的可视化导航应用。
-- **运行 Web 服务**：在根目录下运行 `python web_server.py`，然后访问 `http://localhost:5678/`。生产页面位于 `web_ui`，由 Flask 直接托管；前端源码位于 `web_client`，开发或重新构建时运行 `npm install && npm run build`。
+- **运行 Web 服务**：在根目录下运行 `python web_server.py`，然后访问 `http://localhost:5680/`。生产页面位于 `web_ui`，由 Flask 直接托管；前端源码位于 `web_client`，开发或重新构建时运行 `npm install && npm run build`。
 
 ### 4. 运行功能测试与性能评估
 

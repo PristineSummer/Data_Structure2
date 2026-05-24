@@ -425,6 +425,8 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .path-row {
   padding-top: 5px;
   border-top: 1px solid #e2e8f0;
+  font-size: 12px;
+  line-height: 1.28;
   font-weight: 700;
 }
 .path-row.blue { color: #2563eb; }

@@ -104,6 +104,7 @@ export default function App() {
   const statusTimerRef = useRef<number | null>(null);
   const lastMouseStatusRef = useRef(0);
   const highlightTimerRef = useRef<number | null>(null);
+  const lastRouteExplainRequestRef = useRef<string | null>(null);
   const incidentModeRef = useRef(false);
   const selectionModeRef = useRef<SelectionMode>('none');
   const incidentRadiusRef = useRef(150);
@@ -126,6 +127,8 @@ export default function App() {
   const [trafficPath, setTrafficPath] = useState<PathDTO | null>(null);
   const [algorithmCompare, setAlgorithmCompare] = useState<AlgorithmCompareDTO | null>(null);
   const [routeExplain, setRouteExplain] = useState<RouteExplainDTO | null>(null);
+  const [routeExplainPending, setRouteExplainPending] = useState(false);
+  const [routeExplainError, setRouteExplainError] = useState<string | null>(null);
   const [activeTrace, setActiveTrace] = useState<PathDTO | null>(null);
   const [traceIndex, setTraceIndex] = useState(0);
   const [tracePlaying, setTracePlaying] = useState(false);
@@ -936,6 +939,9 @@ export default function App() {
     setHoveredEdge(null);
     setAlgorithmCompare(null);
     setRouteExplain(null);
+    setRouteExplainPending(false);
+    setRouteExplainError(null);
+    lastRouteExplainRequestRef.current = null;
     setNearbyResult(null);
     setTrafficQueryResult(null);
     setPois([]);
@@ -982,6 +988,9 @@ export default function App() {
     setTrafficPath(null);
     setAlgorithmCompare(null);
     setRouteExplain(null);
+    setRouteExplainPending(false);
+    setRouteExplainError(null);
+    lastRouteExplainRequestRef.current = null;
     setActiveTrace(null);
     setTraceIndex(0);
     setTracePlaying(false);
@@ -989,16 +998,23 @@ export default function App() {
   }
 
   function applyRouteExplain(data: RouteExplainDTO, play: 'static' | 'traffic' | 'none' = 'traffic') {
+    const staticRoute = {
+      ...data.static_path,
+      edge_levels: data.static_edge_levels,
+      congestion_count: data.static_congested_edges,
+    };
     const traffic = {
       ...data.traffic_path,
       edge_levels: data.traffic_edge_levels,
       congestion_count: data.traffic_congested_edges,
     };
+    setRouteExplainPending(false);
+    setRouteExplainError(null);
     setRouteExplain(data);
-    setStaticPath(data.static_path);
+    setStaticPath(staticRoute);
     setTrafficPath(traffic);
     if (play !== 'none') {
-      startTracePlayback(play === 'static' ? data.static_path : traffic, play === 'traffic' ? 3500 : undefined);
+      startTracePlayback(play === 'static' ? staticRoute : traffic, play === 'traffic' ? 3500 : undefined);
     }
   }
 
@@ -1008,9 +1024,15 @@ export default function App() {
     play: 'static' | 'traffic' | 'none' = 'traffic',
   ) {
     if (!s || !e) return null;
-    const data = await api.routeExplain(s.id, e.id, algorithm, true);
-    applyRouteExplain(data, play);
-    return data;
+    setRouteExplainPending(true);
+    setRouteExplainError(null);
+    try {
+      const data = await api.routeExplain(s.id, e.id, algorithm, true);
+      applyRouteExplain(data, play);
+      return data;
+    } finally {
+      setRouteExplainPending(false);
+    }
   }
 
   async function runAlgorithmCompare() {
@@ -1061,28 +1083,24 @@ export default function App() {
 
   const runPath = async () => {
     if (!start || !end) return setError('请先点击“设置起点/设置终点”并在地图上选择');
-    setBusy('计算静态最短路径并收集算法轨迹...');
-    if (trafficPath) {
-      try {
-        const data = await refreshRouteExplainFor(start, end, 'static');
-        if (data) setOk(`${data.static_path.algorithm} 路径完成，访问 ${data.static_path.nodes_visited} 个节点`);
-        return;
-      } catch {
-        // Fall back to a plain shortest path if the explain endpoint is temporarily unavailable.
-      }
+    setBusy('计算静态最短路径并生成决策解释...');
+    try {
+      const data = await refreshRouteExplainFor(start, end, 'static');
+      if (data) setOk(`${data.static_path.algorithm} 路径完成：静态路线经过 ${data.static_congested_edges} 段拥堵/严重拥堵`);
+    } catch (error) {
+      setError((error as Error).message);
     }
-    const path = await api.path(start.id, end.id, algorithm, true);
-    setStaticPath(path);
-    setRouteExplain(null);
-    startTracePlayback(path);
-    setOk(`${path.algorithm} 路径完成，访问 ${path.nodes_visited} 个节点`);
   };
 
   const runTrafficPath = async () => {
     if (!start || !end) return setError('请先选择起点和终点');
     setBusy('计算交通感知路径并生成决策解释...');
-    const data = await refreshRouteExplainFor(start, end, 'traffic');
-    if (data) setOk(data.summary);
+    try {
+      const data = await refreshRouteExplainFor(start, end, 'traffic');
+      if (data) setOk(`交通感知路线绕开 ${data.avoided_congested_edges} 段拥堵，时间差 ${fmt(data.metrics.time_delta)}`);
+    } catch (error) {
+      setError((error as Error).message);
+    }
   };
 
   function clearRoutes() {
@@ -1104,6 +1122,8 @@ export default function App() {
     setStaticPath(null);
     setIncident(null);
     setHighlightedEdge(null);
+    setRouteExplainPending(false);
+    setRouteExplainError(null);
     setNearbyResult(null);
     setTrafficQueryResult(null);
     try {
@@ -1148,18 +1168,15 @@ export default function App() {
       setTrafficPath(demo.traffic_path);
       startTracePlayback(demo.traffic_path, 3500);
       if (demo.route_explain) {
-        setRouteExplain(demo.route_explain);
-        setTrafficPath({
-          ...demo.traffic_path,
-          edge_levels: demo.route_explain.traffic_edge_levels,
-          congestion_count: demo.route_explain.traffic_congested_edges,
-        });
+        applyRouteExplain(demo.route_explain, 'none');
       } else {
         try {
           const explanation = await api.routeExplain(demo.start.id, demo.end.id, 'astar', true);
-          setRouteExplain(explanation);
+          applyRouteExplain(explanation, 'none');
         } catch {
+          setRouteExplainPending(false);
           setRouteExplain(null);
+          setRouteExplainError('路径解释生成失败，可点击路径按钮重试');
         }
       }
       await sleep(700);
@@ -1346,6 +1363,18 @@ export default function App() {
     return c ? glx(c.lat, c.lng) : { x: fallback.width / 2, y: fallback.height / 2 };
   }
 
+  useEffect(() => {
+    if (!start || !end || routeExplain || routeExplainPending) return;
+    if (!staticPath && !trafficPath) return;
+    const key = `${start.id}-${end.id}-${algorithm}-${staticPath?.distance ?? 'none'}-${trafficPath?.distance ?? 'none'}`;
+    if (lastRouteExplainRequestRef.current === key) return;
+    lastRouteExplainRequestRef.current = key;
+    void refreshRouteExplainFor(start, end, 'none').catch(() => {
+      setRouteExplainPending(false);
+      setRouteExplainError('路径解释生成失败，可点击“普通最短路径”或“交通感知路径”重试');
+    });
+  }, [algorithm, end, routeExplain, routeExplainPending, start, staticPath, trafficPath]);
+
   const handleOverviewClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
     if (!stats) return;
     const canvas = overviewCanvasRef.current;
@@ -1371,7 +1400,37 @@ export default function App() {
     return counts;
   }, [trafficQueryResult]);
 
+  const routeCongestionCounts = useMemo(() => {
+    const staticCongested = routeExplain?.static_congested_edges
+      ?? staticPath?.congestion_count
+      ?? staticPath?.edge_levels?.filter((level) => level >= 2).length
+      ?? 0;
+    const trafficCongested = routeExplain?.traffic_congested_edges
+      ?? trafficPath?.congestion_count
+      ?? trafficPath?.edge_levels?.filter((level) => level >= 2).length
+      ?? 0;
+    const avoided = routeExplain?.avoided_congested_edges
+      ?? Math.max(0, staticCongested - trafficCongested);
+    return { staticCongested, trafficCongested, avoided };
+  }, [routeExplain, staticPath, trafficPath]);
+
+  const trafficPathBadge = staticPath && trafficPath
+    ? routeExplain ? `避开 ${routeCongestionCounts.avoided} 段` : routeExplainPending ? '分析中' : '待分析'
+    : `拥堵段 ${trafficPath?.congestion_count ?? 0}`;
+
   const routeDecisionText = useMemo(() => {
+    if (routeExplainPending) {
+      return {
+        text: '正在生成路径决策解释...',
+        meta: '计算静态路线、交通感知路线与拥堵绕行收益',
+      };
+    }
+    if (routeExplainError) {
+      return {
+        text: routeExplainError,
+        meta: '现有路径仍可展示；重新点击路径按钮可再次生成解释',
+      };
+    }
     if (routeExplain) {
       const timeDelta = Number(routeExplain.metrics.time_delta || 0);
       const timeWord = timeDelta >= 0 ? '节省' : '增加';
@@ -1381,23 +1440,13 @@ export default function App() {
       };
     }
     if (staticPath && trafficPath) {
-      const distanceDelta = trafficPath.distance - staticPath.distance;
       return {
-        text: `交通感知路线当前保留 ${trafficPath.congestion_count ?? 0} 段拥堵/严重拥堵，较静态最短路径${distanceDelta >= 0 ? '绕行' : '缩短'} ${fmt(Math.abs(distanceDelta))}。`,
-        meta: `静态 ${staticPath.hops} 跳 · 交通 ${trafficPath.hops} 跳 · 距离差 ${fmt(distanceDelta)}`,
+        text: '正在生成路径决策解释...',
+        meta: '读取实时拥堵状态并计算避堵收益',
       };
     }
-    if (staticPath) {
-      return {
-        text: '静态最短路径已生成；点击“交通感知路径”后将在这里展示避堵决策解释。',
-        meta: `${staticPath.hops} 跳 · 距离 ${fmt(staticPath.distance)} · ${fmt(staticPath.elapsed_ms, 2)}ms`,
-      };
-    }
-    return {
-      text: '交通感知路径已生成；建议同时生成静态路径以展示完整对比。',
-      meta: `${trafficPath?.hops ?? 0} 跳 · 拥堵段 ${trafficPath?.congestion_count ?? 0}`,
-    };
-  }, [routeExplain, staticPath, trafficPath]);
+    return null;
+  }, [routeCongestionCounts, routeExplain, routeExplainError, routeExplainPending, staticPath, trafficPath]);
 
   return (
     <div className="shell">
@@ -1482,7 +1531,7 @@ export default function App() {
             <span>{end ? `ID ${end.id} (${fmt(end.x, 0)}, ${fmt(end.y, 0)})` : '点击“设置终点”后在地图选择'}</span>
           </div>
           {staticPath && <div className="path-row blue">静态路径 {fmt(staticPath.distance)} · {staticPath.hops} 跳 · {fmt(staticPath.elapsed_ms, 2)}ms</div>}
-          {trafficPath && <div className="path-row purple">交通路径 {fmt(trafficPath.distance)} · 拥堵段 {trafficPath.congestion_count ?? 0}</div>}
+          {trafficPath && <div className="path-row purple">交通路径 {fmt(trafficPath.distance)} · {trafficPathBadge}</div>}
           {routeDecisionText ? (
             <div className="explain-row">
               {routeDecisionText.text}
