@@ -1371,7 +1371,7 @@ export default function App() {
     lastRouteExplainRequestRef.current = key;
     void refreshRouteExplainFor(start, end, 'none').catch(() => {
       setRouteExplainPending(false);
-      setRouteExplainError('路径解释生成失败，可点击“普通最短路径”或“交通感知路径”重试');
+        setRouteExplainError('路径解释生成失败，可点击“普通静态路径”或“交通感知路径”重试');
     });
   }, [algorithm, end, routeExplain, routeExplainPending, start, staticPath, trafficPath]);
 
@@ -1514,7 +1514,7 @@ export default function App() {
             </select>
           </label>
           <div className="grid2">
-            <button className="command" onClick={runPath}>普通最短路径</button>
+            <button className="command" onClick={runPath}>普通静态路径</button>
             <button className="command purple" onClick={runTrafficPath}>交通感知路径</button>
           </div>
           <button className="command ghost" onClick={clearRoutes}>清除路径</button>
