@@ -1,8 +1,8 @@
 """
 web_server.py — Navigation System Web Server
-将 NavigationEngine 封装为 REST API，同时提供 Leaflet 前端静态文件服务。
+Expose NavigationEngine as a REST API and serve the Leaflet/React frontend.
 
-启动方式: python web_server.py
+Run with: python web_server.py
 """
 import heapq, math, os, sys, threading, time, webbrowser
 from pathlib import Path
@@ -10,7 +10,7 @@ from pathlib import Path
 try:
     from flask import Flask, jsonify, request, send_from_directory
 except ImportError:
-    print("请先安装 Flask: pip install flask")
+    print("Please install Flask first: pip install flask")
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -76,7 +76,7 @@ def load_map():
     data     = request.get_json() or {}
     filepath = data.get("filepath", "")
     if not os.path.exists(filepath):
-        return jsonify({"error": f"文件不存在: {filepath}"}), 400
+        return jsonify({"error": f"File does not exist: {filepath}"}), 400
     try:
         engine.load_map(filepath)
         _set_cache_info(False, "", "")
@@ -88,7 +88,7 @@ def load_map():
 @app.route("/api/map/save", methods=["POST"])
 def save_map():
     if not engine.is_loaded:
-        return jsonify({"error": "地图未加载"}), 400
+        return jsonify({"error": "Map is not loaded"}), 400
     data     = request.get_json() or {}
     filepath = data.get("filepath", "map.json")
     try:
@@ -514,11 +514,11 @@ def traffic_history():
 def poi_categories():
     return jsonify({
         "categories": [
-            {"id": "gas_station", "label": "加油站"},
-            {"id": "restaurant", "label": "餐厅"},
-            {"id": "parking", "label": "停车场"},
-            {"id": "repair", "label": "维修"},
-            {"id": "hospital", "label": "医院"},
+            {"id": "gas_station", "label": "Gas Station"},
+            {"id": "restaurant", "label": "Restaurant"},
+            {"id": "parking", "label": "Parking"},
+            {"id": "repair", "label": "Repair"},
+            {"id": "hospital", "label": "Hospital"},
         ]
     })
 
@@ -928,25 +928,25 @@ def _route_explain_payload(
     length_delta = traffic_length - static_length
 
     if not static_res.found or not traffic_res.found:
-        summary = "当前起终点暂未找到完整可通行路径，请重新选择路线。"
+        summary = "No complete passable route was found for the current endpoints. Please choose another route."
     elif avoided > 0 and time_delta >= 0:
         summary = (
-            f"静态路线经过 {len(static_congested_keys)} 段拥堵/严重拥堵，"
-            f"交通感知路线绕开了其中 {avoided} 段，预计节省 {time_delta:.1f} 通行时间。"
+            f"The static route crosses {len(static_congested_keys)} congested/severe segments. "
+            f"The traffic-aware route avoids {avoided} of them and saves about {time_delta:.1f} travel time."
         )
     elif avoided > 0:
         summary = (
-            f"交通感知路线绕开了 {avoided} 段拥堵道路，但绕行距离增加 {length_delta:.1f}，"
-            "适合展示安全避堵而非最短距离。"
+            f"The traffic-aware route avoids {avoided} congested roads, while adding {length_delta:.1f} distance. "
+            "This highlights safer congestion avoidance rather than pure shortest distance."
         )
     elif traffic_congested < len(static_congested_keys):
         summary = (
-            f"交通感知路线将拥堵段从 {len(static_congested_keys)} 段降至 {traffic_congested} 段，"
-            "主要收益来自降低高拥堵边的通行代价。"
+            f"The traffic-aware route reduces congested segments from {len(static_congested_keys)} to {traffic_congested}. "
+            "The main benefit comes from lowering the cost of highly congested roads."
         )
     else:
         summary = (
-            "当前交通状态下两条路线差异较小，说明起终点之间暂未形成明显绕行机会。"
+            "The two routes are similar under the current traffic state, so there is no strong detour opportunity yet."
         )
 
     static_payload = _path_payload(static_res, include_trace=trace)
@@ -1138,7 +1138,7 @@ def spa_fallback(path):
 # ─── Launch ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port = 5680
+    port = int(os.environ.get("NAV_WEB_PORT", "5681"))
     url  = f"http://localhost:{port}"
 
     def _open():

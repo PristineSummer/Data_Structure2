@@ -13,12 +13,12 @@ const poiLabels: Record<string, string> = {
   hospital: 'H',
 };
 const poiNames: Record<string, string> = {
-  all: '全部',
-  gas_station: '加油站',
-  restaurant: '餐厅',
-  parking: '停车场',
-  repair: '维修',
-  hospital: '医院',
+  all: 'All',
+  gas_station: 'Gas Station',
+  restaurant: 'Restaurant',
+  parking: 'Parking',
+  repair: 'Repair',
+  hospital: 'Hospital',
 };
 
 const ll = (x: number, y: number): L.LatLngExpression => [-y, x];
@@ -48,19 +48,19 @@ interface DemoStep {
 }
 
 const makeDemoSteps = (n: number): DemoStep[] => [
-  { label: `生成 ${n} 点地图`, state: 'idle' },
-  { label: '启动早高峰交通流', state: 'idle' },
-  { label: '选择跨城路线', state: 'idle' },
-  { label: '注入事故拥堵', state: 'idle' },
-  { label: '对比静态/避堵路径', state: 'idle' },
+  { label: `Generate ${n} vertices`, state: 'idle' },
+  { label: 'Start rush-hour traffic', state: 'idle' },
+  { label: 'Choose cross-city route', state: 'idle' },
+  { label: 'Inject incident congestion', state: 'idle' },
+  { label: 'Compare static vs detour', state: 'idle' },
 ];
 
 const poiScenarios = [
-  { label: '医院急救', category: 'hospital' },
-  { label: '最近加油', category: 'gas_station' },
-  { label: '停车场', category: 'parking' },
-  { label: '维修救援', category: 'repair' },
-  { label: '餐厅导航', category: 'restaurant' },
+  { label: 'Emergency Care', category: 'hospital' },
+  { label: 'Nearest Gas', category: 'gas_station' },
+  { label: 'Parking', category: 'parking' },
+  { label: 'Roadside Repair', category: 'repair' },
+  { label: 'Restaurant Route', category: 'restaurant' },
 ];
 
 function pointToSegmentDistance(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
@@ -112,7 +112,7 @@ export default function App() {
   const viewportRef = useRef<ViewportDTO>({ vertices: [], edges: [] });
   const injectManualIncidentRef = useRef<((x: number, y: number) => Promise<void>) | null>(null);
 
-  const [status, setStatus] = useState({ text: '就绪 - 点击生成地图或启动演示', kind: 'idle' });
+  const [status, setStatus] = useState({ text: 'Ready - generate a map or run the demo', kind: 'idle' });
   const [mapSize, setMapSize] = useState(30000);
   const [stats, setStats] = useState<Stats | null>(null);
   const [viewport, setViewport] = useState<ViewportDTO>({ vertices: [], edges: [] });
@@ -216,7 +216,7 @@ export default function App() {
     setHighlightedEdge(edge);
     setHighlightVisible(true);
     mapRef.current?.panTo(ll((edge.x1 + edge.x2) / 2, (edge.y1 + edge.y2) / 2));
-    setOk(`定位拥堵道路 ${edge.u} - ${edge.v}`);
+    setOk(`Centered congested road ${edge.u} - ${edge.v}`);
     let ticks = 0;
     highlightTimerRef.current = window.setInterval(() => {
       ticks += 1;
@@ -822,7 +822,7 @@ export default function App() {
       const now = performance.now();
       if (now - lastMouseStatusRef.current > 120) {
         lastMouseStatusRef.current = now;
-        setStatus((prev) => ({ ...prev, text: `${prev.text.split(' | ')[0]} | 坐标 (${fmt(x, 0)}, ${fmt(y, 0)})` }));
+        setStatus((prev) => ({ ...prev, text: `${prev.text.split(' | ')[0]} | Coord (${fmt(x, 0)}, ${fmt(y, 0)})` }));
       }
       const point = map.latLngToContainerPoint(e.latlng);
       const nextHover = findHoveredEdge(point);
@@ -846,17 +846,17 @@ export default function App() {
         }
         const mode = selectionModeRef.current;
         if (mode === 'none') {
-          setOk(`坐标 (${fmt(x, 0)}, ${fmt(y, 0)})；请先点击“设置起点”或“设置终点”`);
+          setOk(`Coord (${fmt(x, 0)}, ${fmt(y, 0)}); click "Set Start" or "Set End" first`);
           return;
         }
         const v = await api.nearest(x, y);
         resetRouteResults();
         if (mode === 'start') {
           setStart(v);
-          setOk(`起点已设置 ID:${v.id}`);
+          setOk(`Start set to ID:${v.id}`);
         } else {
           setEnd(v);
-          setOk(`终点已设置 ID:${v.id}`);
+          setOk(`End set to ID:${v.id}`);
         }
         setSelectionMode('none');
       } catch (error) {
@@ -933,7 +933,7 @@ export default function App() {
 
   const generateMap = async () => {
     const n = selectedMapSize;
-    setBusy(`生成 ${n} 点地图中...`);
+    setBusy(`Generating a ${n}-vertex map...`);
     setMinimapData(null);
     setHighlightedEdge(null);
     setHoveredEdge(null);
@@ -952,8 +952,8 @@ export default function App() {
         setStats(res.data);
         fitMap(res.data);
         setOk(res.data.cache_hit
-          ? `${res.data.vertices} 点地图已从缓存加载，可开始演示`
-          : `${res.data.vertices} 点地图生成完毕，已写入缓存`);
+          ? `${res.data.vertices}-vertex map loaded from cache. Ready to demo.`
+          : `${res.data.vertices}-vertex map generated and cached.`);
         await new Promise((r) => setTimeout(r, 100));
         await refreshViewportRef.current?.();
         await loadMinimap();
@@ -961,7 +961,7 @@ export default function App() {
         break;
       }
       if (res.status === 'error') {
-        setError(String(res.data || '生成失败'));
+        setError(String(res.data || 'Generation failed'));
         break;
       }
       await new Promise((r) => setTimeout(r, 500));
@@ -969,18 +969,18 @@ export default function App() {
   };
 
   const startSimulation = async () => {
-    if (!stats) return setError('请先生成地图');
+    if (!stats) return setError('Generate a map first');
     await api.simStart(1800);
     await api.simSpeed(5);
     setSimRunning(true);
-    setOk('早高峰交通模拟运行中');
+    setOk('Rush-hour traffic simulation is running');
   };
 
   const stopSimulation = async () => {
     await api.simStop();
     setSimRunning(false);
     setCars([]);
-    setOk('模拟已停止');
+    setOk('Simulation stopped');
   };
 
   function resetRouteResults() {
@@ -1036,13 +1036,13 @@ export default function App() {
   }
 
   async function runAlgorithmCompare() {
-    if (!start || !end) return setError('请先选择起点和终点');
-    setBusy('正在同时对比 A* 与 Dijkstra...');
+    if (!start || !end) return setError('Select a start and end first');
+    setBusy('Comparing A* and Dijkstra...');
     try {
       const data = await api.compareAlgorithms(start.id, end.id, true);
       setAlgorithmCompare(data);
       startTracePlayback(data.astar);
-      setOk(`A* 少访问 ${fmt(data.visit_reduction_percent, 1)}% 节点，耗时差 ${fmt(data.time_delta_ms, 2)}ms`);
+      setOk(`A* visited ${fmt(data.visit_reduction_percent, 1)}% fewer vertices; time delta ${fmt(data.time_delta_ms, 2)}ms`);
     } catch (error) {
       setError((error as Error).message);
     }
@@ -1052,12 +1052,12 @@ export default function App() {
     const trace = algorithmCompare?.[kind];
     if (!trace) return;
     startTracePlayback(trace);
-    setOk(`播放 ${kind === 'astar' ? 'A*' : 'Dijkstra'} 真实搜索轨迹`);
+    setOk(`Playing the ${kind === 'astar' ? 'A*' : 'Dijkstra'} search trace`);
   }
 
   async function injectManualIncident(x: number, y: number) {
-    if (!stats) return setError('请先生成地图');
-    setBusy(`注入事故 (${fmt(x, 0)}, ${fmt(y, 0)})...`);
+    if (!stats) return setError('Generate a map first');
+    setBusy(`Injecting incident at (${fmt(x, 0)}, ${fmt(y, 0)})...`);
     try {
       const result = await api.injectTraffic(
         x, y,
@@ -1075,29 +1075,29 @@ export default function App() {
       setAnalytics(await api.analytics());
       await refreshViewportRef.current?.();
       await refreshRouteExplainFor(startRef.current, endRef.current, 'traffic');
-      setOk(`事故已注入，影响 ${result.affected} 条道路`);
+      setOk(`Incident injected, affecting ${result.affected} roads`);
     } catch (error) {
       setError((error as Error).message);
     }
   }
 
   const runPath = async () => {
-    if (!start || !end) return setError('请先点击“设置起点/设置终点”并在地图上选择');
-    setBusy('计算静态最短路径并生成决策解释...');
+    if (!start || !end) return setError('Click "Set Start" and "Set End", then choose points on the map');
+    setBusy('Computing the static shortest path and route explanation...');
     try {
       const data = await refreshRouteExplainFor(start, end, 'static');
-      if (data) setOk(`${data.static_path.algorithm} 路径完成：静态路线经过 ${data.static_congested_edges} 段拥堵/严重拥堵`);
+      if (data) setOk(`${data.static_path.algorithm} route complete: static route crosses ${data.static_congested_edges} congested/severe segments`);
     } catch (error) {
       setError((error as Error).message);
     }
   };
 
   const runTrafficPath = async () => {
-    if (!start || !end) return setError('请先选择起点和终点');
-    setBusy('计算交通感知路径并生成决策解释...');
+    if (!start || !end) return setError('Select a start and end first');
+    setBusy('Computing the traffic-aware route and explanation...');
     try {
       const data = await refreshRouteExplainFor(start, end, 'traffic');
-      if (data) setOk(`交通感知路线绕开 ${data.avoided_congested_edges} 段拥堵，时间差 ${fmt(data.metrics.time_delta)}`);
+      if (data) setOk(`Traffic-aware route avoids ${data.avoided_congested_edges} congested segments; time delta ${fmt(data.metrics.time_delta)}`);
     } catch (error) {
       setError((error as Error).message);
     }
@@ -1116,7 +1116,7 @@ export default function App() {
     const n = selectedMapSize;
     setDemoRunning(true);
     setDemoTimeline(0, -1, n);
-    setBusy(`准备 ${n} 点演示地图...`);
+    setBusy(`Preparing the ${n}-vertex demo map...`);
     setMinimapData(null);
     setTrafficPath(null);
     setStaticPath(null);
@@ -1134,7 +1134,7 @@ export default function App() {
       }
 
       setDemoTimeline(1, 0, n);
-      setBusy('启动早高峰交通流...');
+      setBusy('Starting rush-hour traffic...');
       setStats(demo.stats);
       fitMap(demo.stats);
       setSimRunning(true);
@@ -1144,27 +1144,27 @@ export default function App() {
       await sleep(550);
 
       setDemoTimeline(2, 1, n);
-      setBusy('选择跨城起终点...');
+      setBusy('Choosing cross-city endpoints...');
       setStart(demo.start);
       setEnd(demo.end);
       fitRoute([demo.start, demo.end]);
       await sleep(650);
 
       setDemoTimeline(3, 2, n);
-      setBusy('注入事故拥堵并刷新路况...');
+      setBusy('Injecting incident congestion and refreshing traffic...');
       setIncident(demo.incident);
       await refreshViewportRef.current?.();
       await sleep(650);
 
       setDemoTimeline(4, 3, n);
-      setBusy('播放普通路径搜索轨迹...');
+      setBusy('Playing the static-route search trace...');
       setStaticPath(demo.static_path);
       setTrafficPath(null);
       startTracePlayback(demo.static_path);
       fitRoute(demo.static_path.path);
       await sleep(1300);
 
-      setBusy('切换到交通感知绕行路径...');
+      setBusy('Switching to the traffic-aware detour...');
       setTrafficPath(demo.traffic_path);
       startTracePlayback(demo.traffic_path, 3500);
       if (demo.route_explain) {
@@ -1176,13 +1176,13 @@ export default function App() {
         } catch {
           setRouteExplainPending(false);
           setRouteExplain(null);
-          setRouteExplainError('路径解释生成失败，可点击路径按钮重试');
+          setRouteExplainError('Route explanation failed. Click a route button to retry.');
         }
       }
       await sleep(700);
 
       setDemoTimeline(null, 4, n);
-      setOk(`演示就绪：事故影响 ${demo.incident.affected_edges} 条边`);
+      setOk(`Demo ready: incident affects ${demo.incident.affected_edges} roads`);
     } catch (error) {
       setError((error as Error).message);
     } finally {
@@ -1191,11 +1191,11 @@ export default function App() {
   };
 
   const searchPois = async (category = poiCategory, limit = 12) => {
-    if (!stats) return setError('请先生成地图');
+    if (!stats) return setError('Generate a map first');
     const center = start || currentMapCenter(stats);
     const data = await api.poiSearch(center.x, center.y, category, limit, 700);
     setPois(data.pois);
-    setOk(`找到 ${data.pois.length} 个 ${poiNames[category] || 'POI'}`);
+    setOk(`Found ${data.pois.length} ${poiNames[category] || 'POIs'}`);
     if (data.pois[0]) {
       mapRef.current?.panTo(ll(data.pois[0].x, data.pois[0].y));
     }
@@ -1203,7 +1203,7 @@ export default function App() {
 
   const routeToPoi = async (poi: POI) => {
     if (!stats) return;
-    setBusy(`规划到 ${poi.name} 的路线...`);
+    setBusy(`Planning a route to ${poi.name}...`);
     let s = start;
     if (!s) {
       const center = currentMapCenter(stats);
@@ -1221,53 +1221,53 @@ export default function App() {
     } catch {
       setRouteExplain(null);
     }
-    setOk(`已规划到 ${poi.name}，距离 ${fmt(path.distance)}，${path.hops} 跳`);
+    setOk(`Route to ${poi.name} planned: distance ${fmt(path.distance)}, ${path.hops} hops`);
   };
 
   const runPoiScenario = async (scenario: { label: string; category: string }) => {
-    if (!stats) return setError('请先生成地图');
+    if (!stats) return setError('Generate a map first');
     setPoiScenario(scenario.label);
     setPoiCategory(scenario.category);
     const center = start || currentMapCenter(stats);
-    setBusy(`执行场景：${scenario.label}`);
+    setBusy(`Running scenario: ${scenario.label}`);
     try {
       const data = await api.poiSearch(center.x, center.y, scenario.category, 6, 1800);
       setPois(data.pois);
       if (!data.pois[0]) {
-        setError(`附近没有找到${poiNames[scenario.category] || '目标'}`);
+        setError(`No nearby ${poiNames[scenario.category] || 'target'} found`);
         return;
       }
       await routeToPoi(data.pois[0]);
-      setOk(`${scenario.label}：已选择最近的 ${data.pois[0].name}`);
+      setOk(`${scenario.label}: selected nearest ${data.pois[0].name}`);
     } catch (error) {
       setError((error as Error).message);
     }
   };
 
   async function queryNearbyVertices() {
-    if (!stats) return setError('请先生成地图');
+    if (!stats) return setError('Generate a map first');
     const x = Number(nearbyX);
     const y = Number(nearbyY);
     const k = Math.round(clamp(Number(nearbyK) || 100, 1, 500));
-    setBusy(`查询 (${fmt(x, 0)}, ${fmt(y, 0)}) 附近 ${k} 个顶点...`);
+    setBusy(`Querying ${k} nearest vertices around (${fmt(x, 0)}, ${fmt(y, 0)})...`);
     try {
       const data = await api.nearby(x, y, k);
       setNearbyK(k);
       setNearbyResult(data);
       mapRef.current?.panTo(ll(data.center.x, data.center.y));
-      setOk(`F1 查询完成：${data.vertices.length} 个最近点，${data.edges.length} 条关联边`);
+      setOk(`F1 query complete: ${data.vertices.length} nearest vertices, ${data.edges.length} associated roads`);
     } catch (error) {
       setError((error as Error).message);
     }
   }
 
   async function queryTrafficByTime() {
-    if (!stats) return setError('请先生成地图');
+    if (!stats) return setError('Generate a map first');
     const x = Number(trafficQueryX);
     const y = Number(trafficQueryY);
     const t = Math.max(0, Math.round(Number(trafficQueryTime) || 0));
     const r = Math.max(10, Number(trafficQueryRadius) || 300);
-    setBusy(`查询 t=${t} 时刻附近交通流...`);
+    setBusy(`Querying nearby traffic at t=${t}...`);
     try {
       const data = await api.trafficHistory(x, y, t, r);
       setTrafficQueryTime(t);
@@ -1275,8 +1275,8 @@ export default function App() {
       setTrafficQueryResult(data);
       mapRef.current?.panTo(ll(data.center.x, data.center.y));
       setOk(data.edges.length
-        ? `交通查询完成：${data.edges.length} 条附近道路`
-        : '未找到该时刻附近交通记录，可先启动交通模拟');
+        ? `Traffic query complete: ${data.edges.length} nearby roads`
+        : 'No nearby traffic record for this time. Start the simulation first.');
     } catch (error) {
       setError((error as Error).message);
     }
@@ -1300,34 +1300,34 @@ export default function App() {
     const lines = [
       '# Navigation Demo Report',
       '',
-      `- 导出时间: ${snapshot.exported_at}`,
-      `- 地图规模: ${snapshot.stats ? `${snapshot.stats.vertices} 节点 / ${snapshot.stats.edges} 道路 / ${snapshot.stats.poi_count} POI` : '未生成'}`,
-      `- 起点: ${snapshot.start ? `ID ${snapshot.start.id} (${fmt(snapshot.start.x, 0)}, ${fmt(snapshot.start.y, 0)})` : '未选择'}`,
-      `- 终点: ${snapshot.end ? `ID ${snapshot.end.id} (${fmt(snapshot.end.x, 0)}, ${fmt(snapshot.end.y, 0)})` : '未选择'}`,
-      `- 事故: ${snapshot.incident ? `(${fmt(snapshot.incident.x, 0)}, ${fmt(snapshot.incident.y, 0)}), 半径 ${snapshot.incident.radius}, 强度 ${snapshot.incident.intensity}, 影响 ${snapshot.incident.affected_edges} 条边` : '无'}`,
+      `- Exported at: ${snapshot.exported_at}`,
+      `- Map scale: ${snapshot.stats ? `${snapshot.stats.vertices} vertices / ${snapshot.stats.edges} roads / ${snapshot.stats.poi_count} POIs` : 'Not generated'}`,
+      `- Start: ${snapshot.start ? `ID ${snapshot.start.id} (${fmt(snapshot.start.x, 0)}, ${fmt(snapshot.start.y, 0)})` : 'Not selected'}`,
+      `- End: ${snapshot.end ? `ID ${snapshot.end.id} (${fmt(snapshot.end.x, 0)}, ${fmt(snapshot.end.y, 0)})` : 'Not selected'}`,
+      `- Incident: ${snapshot.incident ? `(${fmt(snapshot.incident.x, 0)}, ${fmt(snapshot.incident.y, 0)}), radius ${snapshot.incident.radius}, intensity ${snapshot.incident.intensity}, affected ${snapshot.incident.affected_edges} roads` : 'None'}`,
       '',
-      '## 算法竞速',
+      '## Algorithm Race',
       compare
-        ? `- A*: ${fmt(compare.astar.elapsed_ms, 2)}ms, 访问 ${compare.astar.nodes_visited} 节点, ${compare.astar.hops} 跳, 距离 ${fmt(compare.astar.distance)}`
-        : '- 未运行',
+        ? `- A*: ${fmt(compare.astar.elapsed_ms, 2)}ms, visited ${compare.astar.nodes_visited} vertices, ${compare.astar.hops} hops, distance ${fmt(compare.astar.distance)}`
+        : '- Not run',
       compare
-        ? `- Dijkstra: ${fmt(compare.dijkstra.elapsed_ms, 2)}ms, 访问 ${compare.dijkstra.nodes_visited} 节点, ${compare.dijkstra.hops} 跳, 距离 ${fmt(compare.dijkstra.distance)}`
+        ? `- Dijkstra: ${fmt(compare.dijkstra.elapsed_ms, 2)}ms, visited ${compare.dijkstra.nodes_visited} vertices, ${compare.dijkstra.hops} hops, distance ${fmt(compare.dijkstra.distance)}`
         : '',
-      compare ? `- A* 访问节点减少: ${fmt(compare.visit_reduction_percent, 1)}%, 耗时差: ${fmt(compare.time_delta_ms, 2)}ms` : '',
+      compare ? `- A* visit reduction: ${fmt(compare.visit_reduction_percent, 1)}%, time delta: ${fmt(compare.time_delta_ms, 2)}ms` : '',
       '',
-      '## 路径决策解释',
-      explain ? `- ${explain.summary}` : '- 未生成路径解释',
-      explain ? `- 静态拥堵段: ${explain.static_congested_edges}, 交通路径拥堵段: ${explain.traffic_congested_edges}, 避开拥堵边: ${explain.avoided_congested_edges}` : '',
-      explain ? `- 静态预计通行时间: ${fmt(explain.metrics.static_traffic_time)}, 交通路径预计通行时间: ${fmt(explain.metrics.traffic_traffic_time)}` : '',
+      '## Route Explanation',
+      explain ? `- ${explain.summary}` : '- No route explanation generated',
+      explain ? `- Static congested segments: ${explain.static_congested_edges}, traffic-route congested segments: ${explain.traffic_congested_edges}, avoided congested roads: ${explain.avoided_congested_edges}` : '',
+      explain ? `- Static estimated travel time: ${fmt(explain.metrics.static_traffic_time)}, traffic-route estimated travel time: ${fmt(explain.metrics.traffic_traffic_time)}` : '',
       '',
-      '## 交通态势',
-      snapshot.analytics ? `- 活跃车辆: ${snapshot.analytics.active_cars}` : '- 无交通统计',
-      snapshot.analytics ? `- 平均拥堵率: ${fmt(snapshot.analytics.average_ratio * 100, 1)}%, 最大拥堵率: ${fmt(snapshot.analytics.max_ratio * 100, 1)}%` : '',
+      '## Traffic Status',
+      snapshot.analytics ? `- Active cars: ${snapshot.analytics.active_cars}` : '- No traffic analytics',
+      snapshot.analytics ? `- Average congestion: ${fmt(snapshot.analytics.average_ratio * 100, 1)}%, max congestion: ${fmt(snapshot.analytics.max_ratio * 100, 1)}%` : '',
       '',
       '## POI',
       snapshot.pois.length
-        ? snapshot.pois.slice(0, 8).map((poi, idx) => `- #${idx + 1} ${poi.name} (${poi.poi_type}), 距离 ${fmt(poi.distance, 0)}, ID ${poi.id}`).join('\n')
-        : '- 未搜索 POI',
+        ? snapshot.pois.slice(0, 8).map((poi, idx) => `- #${idx + 1} ${poi.name} (${poi.poi_type}), distance ${fmt(poi.distance, 0)}, ID ${poi.id}`).join('\n')
+        : '- No POI search',
       '',
     ];
     return lines.join('\n');
@@ -1355,7 +1355,7 @@ export default function App() {
       buildMarkdownReport(snapshot),
       'text/markdown;charset=utf-8',
     );
-    setOk('已导出 Markdown 报告和 JSON 快照');
+    setOk('Exported Markdown report and JSON snapshot');
   }
 
   function currentMapCenter(fallback: Stats) {
@@ -1371,7 +1371,7 @@ export default function App() {
     lastRouteExplainRequestRef.current = key;
     void refreshRouteExplainFor(start, end, 'none').catch(() => {
       setRouteExplainPending(false);
-        setRouteExplainError('路径解释生成失败，可点击“普通静态路径”或“交通感知路径”重试');
+        setRouteExplainError('Route explanation failed. Click "Static Route" or "Traffic-Aware Route" to retry.');
     });
   }, [algorithm, end, routeExplain, routeExplainPending, start, staticPath, trafficPath]);
 
@@ -1415,34 +1415,34 @@ export default function App() {
   }, [routeExplain, staticPath, trafficPath]);
 
   const trafficPathBadge = staticPath && trafficPath
-    ? routeExplain ? `避开 ${routeCongestionCounts.avoided} 段` : routeExplainPending ? '分析中' : '待分析'
-    : `拥堵段 ${trafficPath?.congestion_count ?? 0}`;
+    ? routeExplain ? `Avoided ${routeCongestionCounts.avoided}` : routeExplainPending ? 'Analyzing' : 'Pending'
+    : `Congested ${trafficPath?.congestion_count ?? 0}`;
 
   const routeDecisionText = useMemo(() => {
     if (routeExplainPending) {
       return {
-        text: '正在生成路径决策解释...',
-        meta: '计算静态路线、交通感知路线与拥堵绕行收益',
+        text: 'Generating route decision explanation...',
+        meta: 'Comparing static and traffic-aware routes with congestion benefits',
       };
     }
     if (routeExplainError) {
       return {
         text: routeExplainError,
-        meta: '现有路径仍可展示；重新点击路径按钮可再次生成解释',
+        meta: 'Current routes remain visible; click a route button to retry the explanation',
       };
     }
     if (routeExplain) {
       const timeDelta = Number(routeExplain.metrics.time_delta || 0);
-      const timeWord = timeDelta >= 0 ? '节省' : '增加';
+      const timeWord = timeDelta >= 0 ? 'saves' : 'adds';
       return {
-        text: `静态路线经过 ${routeExplain.static_congested_edges} 段拥堵/严重拥堵，交通感知路线绕开了其中 ${routeExplain.avoided_congested_edges} 段，预计${timeWord} ${fmt(Math.abs(timeDelta))} 通行时间。`,
-        meta: `避开 ${routeExplain.avoided_congested_edges} 段 · 时间差 ${fmt(timeDelta)}`,
+        text: `The static route crosses ${routeExplain.static_congested_edges} congested/severe segments. The traffic-aware route avoids ${routeExplain.avoided_congested_edges} of them and ${timeWord} ${fmt(Math.abs(timeDelta))} travel time.`,
+        meta: `Avoided ${routeExplain.avoided_congested_edges} segments · Time delta ${fmt(timeDelta)}`,
       };
     }
     if (staticPath && trafficPath) {
       return {
-        text: '正在生成路径决策解释...',
-        meta: '读取实时拥堵状态并计算避堵收益',
+        text: 'Generating route decision explanation...',
+        meta: 'Reading live congestion state and estimating detour benefits',
       };
     }
     return null;
@@ -1455,14 +1455,14 @@ export default function App() {
           <div className="brand-mark">NAV</div>
           <div>
             <h1>Navigation System Pro</h1>
-            <p>数据结构课设 · Web 展示版</p>
+            <p>Data Structures · Web Showcase</p>
           </div>
         </header>
 
         <section className="panel primary-panel">
-          <div className="panel-title">一键演示</div>
+          <div className="panel-title">Guided Demo</div>
           <button className="command primary" onClick={runDemo} disabled={demoRunning}>
-            {demoRunning && demoStepIndex !== null ? `演示中 ${demoStepIndex + 1}/5` : '运行一键演示剧本'}
+            {demoRunning && demoStepIndex !== null ? `Demo ${demoStepIndex + 1}/5` : 'Run Guided Demo'}
           </button>
           <div className="timeline">
             {demoSteps.map((step) => <div key={step.label} className={`timeline-row ${step.state}`}><span />{step.label}</div>)}
@@ -1470,8 +1470,8 @@ export default function App() {
         </section>
 
         <section className="panel">
-          <div className="panel-title">地图与算法</div>
-          <label className="field">点数
+          <div className="panel-title">Map & Routing</div>
+          <label className="field">Vertices
             <input
               type="number"
               min={MAP_SIZE_MIN}
@@ -1496,108 +1496,108 @@ export default function App() {
             ))}
           </div>
           <div className="grid2">
-            <button className="command" onClick={generateMap} disabled={demoRunning}>生成 {selectedMapSize} 点</button>
-            <button className="command" onClick={simRunning ? stopSimulation : startSimulation}>{simRunning ? '停止模拟' : '启动交通'}</button>
+            <button className="command" onClick={generateMap} disabled={demoRunning}>Generate {selectedMapSize}</button>
+            <button className="command" onClick={simRunning ? stopSimulation : startSimulation}>{simRunning ? 'Stop Sim' : 'Start Traffic'}</button>
           </div>
           <div className="grid2">
             <button className={`command ${selectionMode === 'start' ? 'active' : ''}`} onClick={() => setSelectionMode(selectionMode === 'start' ? 'none' : 'start')}>
-              {selectionMode === 'start' ? '正在设置起点' : '设置起点'}
+              {selectionMode === 'start' ? 'Pick Start' : 'Set Start'}
             </button>
             <button className={`command ${selectionMode === 'end' ? 'active' : ''}`} onClick={() => setSelectionMode(selectionMode === 'end' ? 'none' : 'end')}>
-              {selectionMode === 'end' ? '正在设置终点' : '设置终点'}
+              {selectionMode === 'end' ? 'Pick End' : 'Set End'}
             </button>
           </div>
-          <label className="field">算法
+          <label className="field">Algorithm
             <select value={algorithm} onChange={(e) => setAlgorithm(e.target.value as 'astar' | 'dijkstra')}>
-              <option value="astar">A* 搜索</option>
+              <option value="astar">A* Search</option>
               <option value="dijkstra">Dijkstra</option>
             </select>
           </label>
           <div className="grid2">
-            <button className="command" onClick={runPath}>普通静态路径</button>
-            <button className="command purple" onClick={runTrafficPath}>交通感知路径</button>
+            <button className="command" onClick={runPath}>Static Route</button>
+            <button className="command purple" onClick={runTrafficPath}>Traffic-Aware</button>
           </div>
-          <button className="command ghost" onClick={clearRoutes}>清除路径</button>
+          <button className="command ghost" onClick={clearRoutes}>Clear Route</button>
         </section>
 
         <section className="panel route-summary">
-          <div className="panel-title">路线信息</div>
+          <div className="panel-title">Route Info</div>
           <div className="route-line">
             <b>S</b>
-            <span>{start ? `ID ${start.id} (${fmt(start.x, 0)}, ${fmt(start.y, 0)})` : '点击“设置起点”后在地图选择'}</span>
+            <span>{start ? `ID ${start.id} (${fmt(start.x, 0)}, ${fmt(start.y, 0)})` : 'Click "Set Start", then pick on the map'}</span>
           </div>
           <div className="route-line">
             <b>E</b>
-            <span>{end ? `ID ${end.id} (${fmt(end.x, 0)}, ${fmt(end.y, 0)})` : '点击“设置终点”后在地图选择'}</span>
+            <span>{end ? `ID ${end.id} (${fmt(end.x, 0)}, ${fmt(end.y, 0)})` : 'Click "Set End", then pick on the map'}</span>
           </div>
-          {staticPath && <div className="path-row blue">静态路径 {fmt(staticPath.distance)} · {staticPath.hops} 跳 · {fmt(staticPath.elapsed_ms, 2)}ms</div>}
-          {trafficPath && <div className="path-row purple">交通路径 {fmt(trafficPath.distance)} · {trafficPathBadge}</div>}
+          {staticPath && <div className="path-row blue">Static Route {fmt(staticPath.distance)} · {staticPath.hops} hops · {fmt(staticPath.elapsed_ms, 2)}ms</div>}
+          {trafficPath && <div className="path-row purple">Traffic Route {fmt(trafficPath.distance)} · {trafficPathBadge}</div>}
           {routeDecisionText ? (
             <div className="explain-row">
               {routeDecisionText.text}
               <span>{routeDecisionText.meta}</span>
             </div>
           ) : (
-            <div className="empty-note">路线计算后在这里展示路径解释</div>
+            <div className="empty-note">Route explanation appears here after routing</div>
           )}
         </section>
 
         <section className="panel">
-          <div className="panel-title">F1 坐标查询</div>
+          <div className="panel-title">F1 Coordinate Query</div>
           <div className="grid2">
-            <label className="mini-field">X 坐标
+            <label className="mini-field">X Coord
               <input type="number" value={nearbyX} onChange={(e) => setNearbyX(Number(e.target.value))} />
             </label>
-            <label className="mini-field">Y 坐标
+            <label className="mini-field">Y Coord
               <input type="number" value={nearbyY} onChange={(e) => setNearbyY(Number(e.target.value))} />
             </label>
           </div>
-          <label className="field">最近点数
+          <label className="field">Nearest
             <input type="number" min={1} max={500} value={nearbyK} onChange={(e) => setNearbyK(Number(e.target.value))} />
           </label>
           <div className="grid2">
-            <button className="command" onClick={queryNearbyVertices}>查询 {Math.round(clamp(Number(nearbyK) || 100, 1, 500))} 最近点</button>
-            <button className="command" onClick={() => setNearbyResult(null)}>清除查询</button>
+            <button className="command" onClick={queryNearbyVertices}>Query {Math.round(clamp(Number(nearbyK) || 100, 1, 500))}</button>
+            <button className="command" onClick={() => setNearbyResult(null)}>Clear Query</button>
           </div>
           {nearbyResult && (
             <>
-              <Metric label="最近点" value={nearbyResult.vertices.length} />
-              <Metric label="关联边" value={nearbyResult.edges.length} />
-              <Metric label="中心坐标" value={`${fmt(nearbyResult.center.x, 0)}, ${fmt(nearbyResult.center.y, 0)}`} />
+              <Metric label="Nearest Vertices" value={nearbyResult.vertices.length} />
+              <Metric label="Associated Roads" value={nearbyResult.edges.length} />
+              <Metric label="Center" value={`${fmt(nearbyResult.center.x, 0)}, ${fmt(nearbyResult.center.y, 0)}`} />
             </>
           )}
         </section>
 
         <section className="panel">
-          <div className="panel-title">时间交通查询</div>
+          <div className="panel-title">Traffic by Time</div>
           <div className="grid2">
-            <label className="mini-field">X 坐标
+            <label className="mini-field">X Coord
               <input type="number" value={trafficQueryX} onChange={(e) => setTrafficQueryX(Number(e.target.value))} />
             </label>
-            <label className="mini-field">Y 坐标
+            <label className="mini-field">Y Coord
               <input type="number" value={trafficQueryY} onChange={(e) => setTrafficQueryY(Number(e.target.value))} />
             </label>
           </div>
           <div className="grid2">
-            <label className="mini-field">时间步
+            <label className="mini-field">Time Step
               <input type="number" min={0} value={trafficQueryTime} onChange={(e) => setTrafficQueryTime(Number(e.target.value))} />
             </label>
-            <label className="mini-field">半径
+            <label className="mini-field">Radius
               <input type="number" min={10} step={10} value={trafficQueryRadius} onChange={(e) => setTrafficQueryRadius(Number(e.target.value))} />
             </label>
           </div>
           <div className="grid2">
-            <button className="command" onClick={() => setTrafficQueryTime(simState?.time_step ?? trafficQueryTime)}>使用当前时间</button>
-            <button className="command" onClick={queryTrafficByTime}>查询附近交通</button>
+            <button className="command" onClick={() => setTrafficQueryTime(simState?.time_step ?? trafficQueryTime)}>Use Current</button>
+            <button className="command" onClick={queryTrafficByTime}>Query Traffic</button>
           </div>
-          <button className="command" onClick={() => setTrafficQueryResult(null)}>清除交通查询</button>
+          <button className="command" onClick={() => setTrafficQueryResult(null)}>Clear Traffic Query</button>
           {trafficQueryResult && (
             <>
-              <Metric label="附近道路" value={trafficQueryResult.edges.length} />
-              <Metric label="查询时间" value={trafficQueryResult.time} />
+              <Metric label="Nearby Roads" value={trafficQueryResult.edges.length} />
+              <Metric label="Query Time" value={trafficQueryResult.time} />
               <div className="query-levels">
                 {[0, 1, 2, 3].map((level) => (
-                  <span key={level}><i style={{ background: trafficColors[level] }} />{['畅', '缓', '堵', '重'][level]} {trafficQueryLevelCounts[String(level)] || 0}</span>
+                  <span key={level}><i style={{ background: trafficColors[level] }} />{['Free', 'Slow', 'Cong.', 'Sev.'][level]} {trafficQueryLevelCounts[String(level)] || 0}</span>
                 ))}
               </div>
             </>
@@ -1605,58 +1605,58 @@ export default function App() {
         </section>
 
         <section className="panel">
-          <div className="panel-title">算法动画</div>
+          <div className="panel-title">Search Animation</div>
           <div className="trace-controls">
-            <button className="chip" onClick={() => setTracePlaying((p) => !p)}>{tracePlaying ? '暂停' : '播放'}</button>
+            <button className="chip" onClick={() => setTracePlaying((p) => !p)}>{tracePlaying ? 'Pause' : 'Play'}</button>
             {[1, 4, 10].map((s) => <button key={s} className={`chip ${traceSpeed === s && traceStepOverride === null ? 'active' : ''}`} onClick={() => { setTraceStepOverride(null); setTraceSpeed(s); }}>{s}x</button>)}
-            <button className="chip" onClick={() => { setTraceStepOverride(null); setTraceIndex(0); setTracePlaying(Boolean(activeTrace)); }}>重播</button>
+            <button className="chip" onClick={() => { setTraceStepOverride(null); setTraceIndex(0); setTracePlaying(Boolean(activeTrace)); }}>Replay</button>
           </div>
-          <Metric label="访问节点" value={activeTrace?.nodes_visited ?? 0} />
-          <Metric label="松弛边数" value={activeTrace?.relaxed_edges.length ?? 0} />
-          {activeTrace?.trace_truncated && <div className="warn">轨迹较长，已截断展示</div>}
+          <Metric label="Visited Vertices" value={activeTrace?.nodes_visited ?? 0} />
+          <Metric label="Relaxed Edges" value={activeTrace?.relaxed_edges.length ?? 0} />
+          {activeTrace?.trace_truncated && <div className="warn">Trace is long and has been truncated</div>}
         </section>
 
         <section className="panel">
-          <div className="panel-title">A* vs Dijkstra 竞速</div>
-          <button className="command" onClick={runAlgorithmCompare}>开始竞速对比</button>
+          <div className="panel-title">A* vs Dijkstra Race</div>
+          <button className="command" onClick={runAlgorithmCompare}>Run Race</button>
           {algorithmCompare && (
             <>
               <div className="race-grid">
                 <button className="race-card" onClick={() => playCompareTrace('astar')}>
                   <span>A*</span>
                   <b>{fmt(algorithmCompare.astar.elapsed_ms, 2)}ms</b>
-                  <em>{algorithmCompare.astar.nodes_visited} 节点 · {algorithmCompare.astar.hops} 跳</em>
+                  <em>{algorithmCompare.astar.nodes_visited} vertices · {algorithmCompare.astar.hops} hops</em>
                 </button>
                 <button className="race-card" onClick={() => playCompareTrace('dijkstra')}>
                   <span>Dijkstra</span>
                   <b>{fmt(algorithmCompare.dijkstra.elapsed_ms, 2)}ms</b>
-                  <em>{algorithmCompare.dijkstra.nodes_visited} 节点 · {algorithmCompare.dijkstra.hops} 跳</em>
+                  <em>{algorithmCompare.dijkstra.nodes_visited} vertices · {algorithmCompare.dijkstra.hops} hops</em>
                 </button>
               </div>
-              <Metric label="访问减少" value={`${fmt(algorithmCompare.visit_reduction_percent, 1)}%`} />
-              <Metric label="耗时差" value={`${fmt(algorithmCompare.time_delta_ms, 2)}ms`} />
+              <Metric label="Visit Reduction" value={`${fmt(algorithmCompare.visit_reduction_percent, 1)}%`} />
+              <Metric label="Time Delta" value={`${fmt(algorithmCompare.time_delta_ms, 2)}ms`} />
             </>
           )}
         </section>
 
         <section className="panel">
-          <div className="panel-title">事故实验</div>
+          <div className="panel-title">Incident Lab</div>
           <button className={`command ${incidentMode ? 'purple' : ''}`} onClick={() => setIncidentMode((enabled) => !enabled)}>
-            {incidentMode ? '点击地图注入事故中' : '开启手动事故模式'}
+            {incidentMode ? 'Click Map to Inject' : 'Enable Incident Mode'}
           </button>
           <div className="grid2">
-            <label className="mini-field">半径
+            <label className="mini-field">Radius
               <input type="number" min={30} max={500} step={10} value={incidentRadius} onChange={(e) => setIncidentRadius(Number(e.target.value))} />
             </label>
-            <label className="mini-field">强度
+            <label className="mini-field">Intensity
               <input type="number" min={10} max={300} step={10} value={incidentIntensity} onChange={(e) => setIncidentIntensity(Number(e.target.value))} />
             </label>
           </div>
-          {incident && <Metric label="事故影响边" value={incident.affected_edges} />}
+          {incident && <Metric label="Affected Roads" value={incident.affected_edges} />}
         </section>
 
         <section className="panel">
-          <div className="panel-title">POI 场景预设</div>
+          <div className="panel-title">POI Presets</div>
           <div className="scenario-grid">
             {poiScenarios.map((scenario) => (
               <button
@@ -1671,18 +1671,18 @@ export default function App() {
         </section>
 
         <section className="panel">
-          <div className="panel-title">图层</div>
-          <Toggle label="道路路况" checked={layers.traffic} onChange={(traffic) => setLayers({ ...layers, traffic })} />
-          <Toggle label="拥堵热力图" checked={layers.heat} onChange={(heat) => setLayers({ ...layers, heat })} />
-          <Toggle label="车辆动画" checked={layers.cars} onChange={(carsLayer) => setLayers({ ...layers, cars: carsLayer })} />
-          <Toggle label="POI 与城市分区" checked={layers.poi} onChange={(poi) => setLayers({ ...layers, poi })} />
-          <Toggle label="算法搜索轨迹" checked={layers.trace} onChange={(trace) => setLayers({ ...layers, trace })} />
+          <div className="panel-title">Layers</div>
+          <Toggle label="Road Traffic" checked={layers.traffic} onChange={(traffic) => setLayers({ ...layers, traffic })} />
+          <Toggle label="Congestion Heatmap" checked={layers.heat} onChange={(heat) => setLayers({ ...layers, heat })} />
+          <Toggle label="Vehicle Animation" checked={layers.cars} onChange={(carsLayer) => setLayers({ ...layers, cars: carsLayer })} />
+          <Toggle label="POIs & Districts" checked={layers.poi} onChange={(poi) => setLayers({ ...layers, poi })} />
+          <Toggle label="Search Trace" checked={layers.trace} onChange={(trace) => setLayers({ ...layers, trace })} />
         </section>
 
         <section className="panel">
-          <div className="panel-title">拥堵道路定位</div>
+          <div className="panel-title">Congested Roads</div>
           <button className="command" onClick={() => setShowCongestedPanel((show) => !show)}>
-            {showCongestedPanel ? '收起 Top 拥堵道路' : '显示 Top 拥堵道路'}
+            {showCongestedPanel ? 'Hide Top Roads' : 'Show Top Roads'}
           </button>
           {showCongestedPanel && (
             <div className="edge-table">
@@ -1697,21 +1697,21 @@ export default function App() {
                   <em>{fmt(edge.ratio * 100, 1)}%</em>
                 </button>
               ))}
-              {!(analytics?.top_congested_edges || []).length && <div className="empty-note">启动交通模拟后显示拥堵道路</div>}
+              {!(analytics?.top_congested_edges || []).length && <div className="empty-note">Start traffic simulation to show congested roads</div>}
             </div>
           )}
         </section>
 
         <section className="panel">
-          <div className="panel-title">POI 搜索导航</div>
-          <label className="field">服务类型
+          <div className="panel-title">POI Search & Route</div>
+          <label className="field">Service
             <select value={poiCategory} onChange={(e) => setPoiCategory(e.target.value)}>
               {Object.entries(poiNames).filter(([id]) => id !== 'all').map(([id, label]) => <option key={id} value={id}>{label}</option>)}
             </select>
           </label>
           <div className="grid2">
-            <button className="command" onClick={() => searchPois()}>搜索附近</button>
-            <button className="command" onClick={async () => { await searchPois(poiCategory, 1); }}>最近服务点</button>
+            <button className="command" onClick={() => searchPois()}>Search Nearby</button>
+            <button className="command" onClick={async () => { await searchPois(poiCategory, 1); }}>Nearest Service</button>
           </div>
           <div className="poi-list">
             {pois.map((poi) => (
@@ -1724,18 +1724,18 @@ export default function App() {
         </section>
 
         <section className="panel">
-          <div className="panel-title">展示结果导出</div>
-          <button className="command primary" onClick={exportDemoResult}>导出 Markdown + JSON</button>
-          <div className="export-hint">包含地图规模、路线解释、算法竞速、事故与交通指标</div>
+          <div className="panel-title">Export Results</div>
+          <button className="command primary" onClick={exportDemoResult}>Export Markdown + JSON</button>
+          <div className="export-hint">Includes map scale, route explanation, algorithm race, incident, and traffic metrics</div>
         </section>
       </aside>
 
       <main className="stage">
         <section className="dashboard">
-          <StatCard label="节点 / 道路" value={stats ? `${stats.vertices} / ${stats.edges}` : '—'} />
-          <StatCard label="活跃车辆" value={simState?.active_cars ?? analytics?.active_cars ?? 0} />
-          <StatCard label="平均拥堵率" value={`${fmt((analytics?.average_ratio ?? 0) * 100, 1)}%`} />
-          <StatCard label="拥堵道路" value={congestedCount} accent="red" />
+          <StatCard label="Vertices / Roads" value={stats ? `${stats.vertices} / ${stats.edges}` : '—'} />
+          <StatCard label="Active Cars" value={simState?.active_cars ?? analytics?.active_cars ?? 0} />
+          <StatCard label="Avg. Congestion" value={`${fmt((analytics?.average_ratio ?? 0) * 100, 1)}%`} />
+          <StatCard label="Congested Roads" value={congestedCount} accent="red" />
           <MiniLine data={analytics?.history || []} />
           <LevelBars counts={analytics?.level_counts || {}} />
         </section>
@@ -1756,22 +1756,22 @@ export default function App() {
           {hoveredEdge && (
             <div className="hover-card" style={{ left: hoveredEdge.screenX, top: hoveredEdge.screenY }}>
               <b>{hoveredEdge.u} - {hoveredEdge.v}</b>
-              <span>长度 {fmt(hoveredEdge.length)} · 容量 {hoveredEdge.capacity}</span>
-              <span>车辆 {fmt(hoveredEdge.current_cars, 1)} · 拥堵率 {fmt(hoveredEdge.ratio * 100, 1)}%</span>
-              <span>等级 {['畅通', '缓行', '拥堵', '严重'][hoveredEdge.level]} · 时间 {fmt(hoveredEdge.travel_time)}</span>
+              <span>Length {fmt(hoveredEdge.length)} · Capacity {hoveredEdge.capacity}</span>
+              <span>Cars {fmt(hoveredEdge.current_cars, 1)} · Congestion {fmt(hoveredEdge.ratio * 100, 1)}%</span>
+              <span>Level {['Free', 'Slow', 'Congested', 'Severe'][hoveredEdge.level]} · Time {fmt(hoveredEdge.travel_time)}</span>
             </div>
           )}
 
           <div className="overview-panel">
             <div className="overview-header">
-              <span>全景 overview</span>
-              <b>{minimapData ? `${minimapData.vertices.length} 点` : '待生成'}</b>
+              <span>Overview</span>
+              <b>{minimapData ? `${minimapData.vertices.length} pts` : 'Pending'}</b>
             </div>
             <canvas ref={overviewCanvasRef} onClick={handleOverviewClick} />
           </div>
 
           <div className="legend">
-            {trafficColors.map((c, i) => <span key={c}><i style={{ background: c }} />{['畅通', '缓行', '拥堵', '严重'][i]}</span>)}
+            {trafficColors.map((c, i) => <span key={c}><i style={{ background: c }} />{['Free', 'Slow', 'Congested', 'Severe'][i]}</span>)}
           </div>
         </div>
       </main>
@@ -1809,7 +1809,7 @@ function MiniLine({ data }: { data: AnalyticsDTO['history'] }) {
   }).join(' ');
   return (
     <div className="chart-card">
-      <div className="chart-title"><span>拥堵趋势</span><b>{latest ? `${fmt(latest.average_ratio * 100, 1)}%` : '—'}</b></div>
+      <div className="chart-title"><span>Congestion Trend</span><b>{latest ? `${fmt(latest.average_ratio * 100, 1)}%` : '—'}</b></div>
       <svg className="mini-line" viewBox={`0 0 ${w} ${h}`}><path d={d || `M0,${h} L${w},${h}`} /></svg>
     </div>
   );
@@ -1819,11 +1819,11 @@ function LevelBars({ counts }: { counts: Record<string, number> }) {
   const total = Math.max(1, Object.values(counts).reduce((a, b) => a + Number(b), 0));
   return (
     <div className="level-card">
-      <div className="chart-title"><span>路况占比</span><b>{total}</b></div>
+      <div className="chart-title"><span>Road Mix</span><b>{total}</b></div>
       <div className="level-bars">
         {[0, 1, 2, 3].map((level) => (
           <div key={level}>
-            <span>{['畅', '缓', '堵', '重'][level]}</span>
+            <span>{['Free', 'Slow', 'Cong.', 'Sev.'][level]}</span>
             <i style={{ width: `${(Number(counts[String(level)] || 0) / total) * 100}%`, background: trafficColors[level] }} />
           </div>
         ))}

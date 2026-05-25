@@ -1,7 +1,7 @@
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body {
-  font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
   background: #edf1f6;
   color: #172033;
 }
@@ -12,7 +12,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .shell {
   height: 100vh;
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 380px 1fr;
   overflow: hidden;
 }
 
@@ -86,7 +86,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .field {
   display: grid;
-  grid-template-columns: 96px 1fr;
+  grid-template-columns: 112px 1fr;
   align-items: center;
   gap: 8px;
   font-size: 12px;
@@ -350,7 +350,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 }
 .level-bars div {
   display: grid;
-  grid-template-columns: 18px 1fr;
+  grid-template-columns: 42px 1fr;
   align-items: center;
   gap: 5px;
   height: 8px;
@@ -558,7 +558,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 }
 
 @media (max-width: 1200px) {
-  .shell { grid-template-columns: 330px 1fr; }
+  .shell { grid-template-columns: 350px 1fr; }
   .dashboard { grid-template-columns: repeat(4, 1fr); height: auto; }
   .stage { grid-template-rows: 170px 1fr; }
   .overview-panel { width: 210px; }
