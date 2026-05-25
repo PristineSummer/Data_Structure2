@@ -25,11 +25,12 @@ const ll = (x: number, y: number): L.LatLngExpression => [-y, x];
 const glx = (lat: number, lng: number) => ({ x: lng, y: -lat });
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 const fmt = (n?: number, digits = 1) => Number.isFinite(n) ? Number(n).toFixed(digits) : '—';
+const DEFAULT_MAP_SIZE = 10000;
 const MAP_SIZE_MIN = 100;
 const MAP_SIZE_MAX = 30000;
 const MAP_SIZE_PRESETS = [5000, 10000, 20000, 30000];
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-const normalizeMapSize = (n: number) => Math.round(clamp(Number.isFinite(n) ? n : 30000, MAP_SIZE_MIN, MAP_SIZE_MAX));
+const normalizeMapSize = (n: number) => Math.round(clamp(Number.isFinite(n) ? n : DEFAULT_MAP_SIZE, MAP_SIZE_MIN, MAP_SIZE_MAX));
 
 type StepState = 'idle' | 'active' | 'done';
 type SelectionMode = 'none' | 'start' | 'end';
@@ -113,7 +114,7 @@ export default function App() {
   const injectManualIncidentRef = useRef<((x: number, y: number) => Promise<void>) | null>(null);
 
   const [status, setStatus] = useState({ text: 'Ready - generate a map or run the demo', kind: 'idle' });
-  const [mapSize, setMapSize] = useState(30000);
+  const [mapSize, setMapSize] = useState(DEFAULT_MAP_SIZE);
   const [stats, setStats] = useState<Stats | null>(null);
   const [viewport, setViewport] = useState<ViewportDTO>({ vertices: [], edges: [] });
   const [minimapData, setMinimapData] = useState<MinimapDTO | null>(null);
@@ -150,7 +151,7 @@ export default function App() {
   const [showCongestedPanel, setShowCongestedPanel] = useState(false);
   const [demoRunning, setDemoRunning] = useState(false);
   const [demoStepIndex, setDemoStepIndex] = useState<number | null>(null);
-  const [demoSteps, setDemoSteps] = useState<DemoStep[]>(() => makeDemoSteps(30000));
+  const [demoSteps, setDemoSteps] = useState<DemoStep[]>(() => makeDemoSteps(DEFAULT_MAP_SIZE));
   const [nearbyX, setNearbyX] = useState(1000);
   const [nearbyY, setNearbyY] = useState(750);
   const [nearbyK, setNearbyK] = useState(100);

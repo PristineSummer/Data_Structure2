@@ -24,7 +24,7 @@ export async function getJson<T>(url: string, params?: Record<string, string | n
 }
 
 export const api = {
-  generateMap: (n = 30000, seed = 2026) => postJson<{ status: string }>('/api/map/generate', { n, seed }),
+  generateMap: (n = 10000, seed = 2026) => postJson<{ status: string }>('/api/map/generate', { n, seed }),
   generationStatus: () => getJson<{ status: string; data: Stats | string | null }>('/api/map/generate/status'),
   stats: () => getJson<Stats>('/api/map/stats'),
   minimap: () => getJson<MinimapDTO>('/api/minimap'),
@@ -48,7 +48,7 @@ export const api = {
   trafficHistory: (x: number, y: number, t: number, r = 300) =>
     getJson<TrafficHistoryDTO>('/api/traffic/history', { x, y, t, r }),
   analytics: () => getJson<AnalyticsDTO>('/api/analytics/traffic'),
-  demo: (n = 30000, seed = 2026) => postJson<DemoDTO>('/api/demo/setup', { n, seed }),
+  demo: (n = 10000, seed = 2026) => postJson<DemoDTO>('/api/demo/setup', { n, seed }),
   poiCategories: () => getJson<{ categories: Array<{ id: string; label: string }> }>('/api/poi/categories'),
   poiSearch: (x: number, y: number, category: string, k = 12, radius = 600) =>
     getJson<{ center: { x: number; y: number }; pois: POI[] }>('/api/poi/search', { x, y, category, k, radius }),

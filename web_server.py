@@ -46,7 +46,7 @@ def index():
 def generate_map():
     global _gen_result
     data = request.get_json() or {}
-    n_actual = max(100, min(30000, int(data.get("n", 30000))))
+    n_actual = max(100, min(30000, int(data.get("n", 10000))))
     seed = int(data.get("seed", 2026))
     with _gen_lock:
         _gen_result = {"status": "running", "data": None}
@@ -559,7 +559,7 @@ def analytics_traffic():
 @app.route("/api/demo/setup", methods=["POST"])
 def demo_setup():
     data = request.get_json() or {}
-    n = max(100, min(30000, int(data.get("n", 30000))))
+    n = max(100, min(30000, int(data.get("n", 10000))))
     seed = int(data.get("seed", 2026))
     try:
         current = engine.get_stats() if engine.is_loaded else {}

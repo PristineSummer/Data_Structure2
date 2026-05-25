@@ -8,7 +8,7 @@ The system demonstrates large-scale synthetic city maps, shortest-path routing, 
 
 ## Web GUI Features
 
-- 30,000-vertex default demonstration scale with map caching and viewport level-of-detail protection.
+- Default demo scale is 10,000 vertices, with 30,000 still available for larger demos.
 - Interactive Leaflet map with Canvas-rendered roads, vertices, vehicles, heatmap, search traces, POIs, and route overlays.
 - Static shortest route and traffic-aware route planning with A* and Dijkstra support.
 - Real algorithm trace playback for visited vertices and relaxed edges.
