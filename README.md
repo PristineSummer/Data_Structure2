@@ -173,7 +173,6 @@ data-structure-main/
 ├── test_phase2.py               # KD-Tree, pathfinding, and engine tests
 ├── test_traffic_simulator.py    # Traffic simulation tests
 ├── test_phase4.py               # Extended engine, traffic, POI, and DTO tests
-├── Announcement.md              # Original course requirements
 ├── README_API.md                # API-oriented reference notes
 └── *.md                         # Additional course, team, and handoff documents
 ```
