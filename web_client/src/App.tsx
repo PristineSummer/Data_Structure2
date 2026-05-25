@@ -1531,7 +1531,7 @@ export default function App() {
             <span>{end ? `ID ${end.id} (${fmt(end.x, 0)}, ${fmt(end.y, 0)})` : 'Click "Set End", then pick on the map'}</span>
           </div>
           {staticPath && <div className="path-row blue">Static Route {fmt(staticPath.distance)} · {staticPath.hops} hops · {fmt(staticPath.elapsed_ms, 2)}ms</div>}
-          {trafficPath && <div className="path-row purple">Traffic Route {fmt(trafficPath.distance)} · {trafficPathBadge}</div>}
+          {trafficPath && <div className="path-row purple">Traffic-Aware {fmt(trafficPath.distance)} · {trafficPathBadge}</div>}
           {routeDecisionText ? (
             <div className="explain-row">
               {routeDecisionText.text}
@@ -1543,7 +1543,7 @@ export default function App() {
         </section>
 
         <section className="panel">
-          <div className="panel-title">F1 Coordinate Query</div>
+          <div className="panel-title">Coordinate Query</div>
           <div className="grid2">
             <label className="mini-field">X Coord
               <input type="number" value={nearbyX} onChange={(e) => setNearbyX(Number(e.target.value))} />
